@@ -1,10 +1,10 @@
 # SQLMind-Agent
 
-SQLMind-Agent is a local, read-only SQL assistant. It exposes a small FastAPI service that can inspect a SQLite database, use NVIDIA NIM to translate natural-language questions into safe `SELECT` queries, execute them, and return the generated SQL, rows, and an AI explanation.
+SQLMind-Agent is a local, read-only SQL assistant. It exposes a small FastAPI service that calls SQLMind-MCP for database schema and query execution, uses NVIDIA NIM to translate natural-language questions into safe `SELECT` queries, and returns generated SQL, rows, and an AI explanation.
 
 The repository was scaffolded from an empty `PRD.md`, so V1 makes conservative assumptions:
 
-- SQLite first, with a demo database for local development.
+- SQLMind-MCP is treated as an external local tool server over stdio.
 - Read-only SQL execution only.
 - NVIDIA NIM integration for SQL generation and result explanation.
 - Existing safety validation still blocks non-`SELECT` SQL before execution.
@@ -17,7 +17,7 @@ python -m venv .venv
 pip install -e ".[dev]"
 python scripts/init_demo_db.py
 Copy-Item .env.example .env
-# Edit .env and set NVIDIA_API_KEY.
+# Edit .env and set NVIDIA_API_KEY and SQLMIND_MCP_SERVER_PATH if needed.
 uvicorn sqlmind_agent.api:app --reload
 ```
 
@@ -58,12 +58,18 @@ Values are read from `.env`.
 ```text
 SQLMIND_DATABASE_PATH=data/demo.db
 SQLMIND_DEFAULT_LIMIT=50
+SQLMIND_MCP_SERVER_PATH=../SQLMind-MCP/server.py
 NVIDIA_API_KEY=
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_MODEL=meta/llama-3.1-8b-instruct
 ```
 
 If `NVIDIA_API_KEY` is missing, `/ask` returns a graceful `503` error. `/schema` and `/query` continue to work without an NVIDIA key.
+
+If SQLMind-MCP cannot start or respond, the API returns a graceful `503` error. SQLMind-Agent does not modify SQLMind-MCP; it starts the configured `server.py` with the official MCP Python SDK stdio client and calls:
+
+- `get_database_schema`
+- `run_select_query`
 
 ## Project Layout
 
@@ -72,6 +78,7 @@ sqlmind_agent/
   api.py              FastAPI routes
   config.py           Runtime settings
   database.py         SQLite schema inspection and execution
+  mcp_client.py       SQLMind-MCP stdio client
   nim_client.py       NVIDIA NIM chat-completions client
   planner.py          Natural-language to SQL starter planner
   safety.py           Read-only SQL validation
@@ -87,9 +94,9 @@ tests/
 V1 is intentionally small but usable:
 
 - `GET /health` reports service status.
-- `GET /schema` returns discovered tables and columns.
-- `POST /ask` generates SQL through NVIDIA NIM, validates it, executes it, and explains the results.
-- `POST /query` executes a caller-provided read-only SQL query.
+- `GET /schema` returns discovered tables and columns from SQLMind-MCP.
+- `POST /ask` fetches schema from MCP, generates SQL through NVIDIA NIM, validates it, executes through MCP, and explains the results.
+- `POST /query` validates caller-provided SQL and executes it through SQLMind-MCP.
 
 ## Next Milestones
 

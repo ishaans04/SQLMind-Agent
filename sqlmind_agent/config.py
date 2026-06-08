@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     database_path: Path = Field(default=Path("data/demo.db"))
     default_limit: int = Field(default=50, ge=1, le=500)
+    mcp_server_path: Path = Field(default=Path("../SQLMind-MCP/server.py"))
     nvidia_api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("NVIDIA_API_KEY", "SQLMIND_NVIDIA_API_KEY"),
