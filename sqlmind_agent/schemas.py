@@ -67,6 +67,35 @@ class AskResponse(BaseModel):
     explanation: str
 
 
+class AnalyzeRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=500)
+    limit: int | None = Field(default=None, ge=1, le=500)
+
+
+class AnalysisPlanStep(BaseModel):
+    step_title: str = Field(min_length=1, max_length=200)
+    purpose: str = Field(min_length=1, max_length=1_000)
+    sql_query: str = Field(min_length=1, max_length=5_000)
+
+
+class ExecutedAnalysisStep(BaseModel):
+    step_title: str
+    purpose: str
+    sql_query: str
+    success: bool
+    results: QueryResults | None = None
+    error: str | None = None
+
+
+class AnalysisResponse(BaseModel):
+    question: str
+    analysis_plan: list[AnalysisPlanStep]
+    executed_steps: list[ExecutedAnalysisStep]
+    result_summaries: list[str]
+    chart_suggestions: list[str]
+    final_insight_report: str
+
+
 class QueryResponse(BaseModel):
     sql: str
     columns: list[str]

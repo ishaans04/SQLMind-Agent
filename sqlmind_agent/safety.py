@@ -14,6 +14,7 @@ BLOCKED_KEYWORDS = {
     "delete",
     "detach",
     "drop",
+    "exec",
     "grant",
     "insert",
     "merge",

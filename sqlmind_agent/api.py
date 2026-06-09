@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
 
+from sqlmind_agent.analysis_plan import AnalysisPlanner, suggest_chart, summarize_results
 from sqlmind_agent.config import Settings, get_settings
 from sqlmind_agent.dependency_check import MYSQL_AVAILABLE, mysql_dependency_error
 from sqlmind_agent.mcp_client import MCPClientError, SQLMindMCPClient
@@ -14,10 +15,13 @@ from sqlmind_agent.safety import (
     validate_read_only_sql,
 )
 from sqlmind_agent.schemas import (
+    AnalysisResponse,
+    AnalyzeRequest,
     AskRequest,
     AskResponse,
     ConnectDatabaseRequest,
     ConnectDatabaseResponse,
+    ExecutedAnalysisStep,
     QueryRequest,
     QueryResponse,
     SchemaResponse,
@@ -54,6 +58,13 @@ def get_nim_client(settings: SettingsDep) -> NIMClient:
 
 
 NIMClientDep = Annotated[NIMClient, Depends(get_nim_client)]
+
+
+def get_analysis_planner(nim_client: NIMClientDep) -> AnalysisPlanner:
+    return AnalysisPlanner(nim_client)
+
+
+AnalysisPlannerDep = Annotated[AnalysisPlanner, Depends(get_analysis_planner)]
 
 
 @app.get("/health")
@@ -135,6 +146,72 @@ def ask(
     )
 
 
+@app.post("/analyze", response_model=AnalysisResponse)
+def analyze(
+    request: AnalyzeRequest,
+    settings: SettingsDep,
+    mcp_client: MCPClientDep,
+    analysis_planner: AnalysisPlannerDep,
+) -> AnalysisResponse:
+    try:
+        question = validate_read_only_prompt(request.question)
+        schema_response = mcp_client.get_database_schema()
+        schema_dict = schema_response.model_dump()
+        analysis_plan = analysis_planner.generate_plan(question, schema_dict)
+    except MCPClientError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except MissingNvidiaApiKeyError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except NIMClientError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except UnsafeQueryError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    executed_steps = []
+    for step in analysis_plan:
+        try:
+            sql = _validate_select_only_analysis_sql(step.sql_query)
+            limited_sql = apply_limit(sql, request.limit or settings.default_limit)
+            results = mcp_client.run_select_query(limited_sql)
+            executed_steps.append(
+                {
+                    "step_title": step.step_title,
+                    "purpose": step.purpose,
+                    "sql_query": limited_sql,
+                    "success": True,
+                    "results": results,
+                }
+            )
+        except (UnsafeQueryError, MCPClientError, Exception) as error:
+            executed_steps.append(
+                {
+                    "step_title": step.step_title,
+                    "purpose": step.purpose,
+                    "sql_query": step.sql_query,
+                    "success": False,
+                    "error": str(error),
+                }
+            )
+
+    executed_models = [ExecutedAnalysisStep(**step) for step in executed_steps]
+    result_summaries = [summarize_results(step) for step in executed_models]
+    chart_suggestions = [suggest_chart(step) for step in executed_models]
+
+    try:
+        final_report = analysis_planner.final_report(question, executed_models)
+    except (MissingNvidiaApiKeyError, NIMClientError) as error:
+        final_report = f"Final insight report could not be generated: {error}"
+
+    return AnalysisResponse(
+        question=question,
+        analysis_plan=analysis_plan,
+        executed_steps=executed_models,
+        result_summaries=result_summaries,
+        chart_suggestions=chart_suggestions,
+        final_insight_report=final_report,
+    )
+
+
 def _validate_database_request(request: ConnectDatabaseRequest) -> None:
     if request.db_type == "sqlite":
         if not request.sqlite_file_path:
@@ -151,6 +228,13 @@ def _validate_database_request(request: ConnectDatabaseRequest) -> None:
     ]
     if missing:
         raise ValueError(f"Missing required database connection fields: {', '.join(missing)}.")
+
+
+def _validate_select_only_analysis_sql(sql: str) -> str:
+    validated = validate_read_only_sql(sql)
+    if not validated.lower().lstrip().startswith(("select ", "with ")):
+        raise UnsafeQueryError("Smart analysis only allows SELECT queries.")
+    return validated
 
 
 @app.post("/query", response_model=QueryResponse)

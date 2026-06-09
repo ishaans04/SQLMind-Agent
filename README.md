@@ -71,6 +71,20 @@ SQLMind stores recent query context in Streamlit session state so follow-up ques
 
 This lets users ask follow-ups such as `show only those above 80`, `sort them by marks`, `now group by course`, `compare this with attendance`, or `show top 5 from this`. Use `Clear Memory` in the sidebar to remove the current session memory. Passwords and database credentials are never stored in memory.
 
+### Smart Analysis Mode
+
+Use the mode selector to switch from `Ask Mode` to `Smart Analysis Mode`. Smart Analysis accepts broad analytical requests such as `Analyze student performance`, asks NVIDIA NIM for a 3 to 5 step analysis plan, validates every generated query with the existing read-only safety layer, executes each safe query through SQLMind-MCP, and returns:
+
+- Analysis plan
+- Executed SQL for each step
+- Result tables
+- Automatic charts when possible
+- Result summaries
+- Chart suggestions
+- Final insight report
+
+If one step fails, SQLMind reports that step and continues running the remaining analysis steps.
+
 ### Visual Analytics
 
 After each successful question, SQLMind displays the result table and a chart section powered by Plotly. Use the chart selector to choose:
@@ -162,6 +176,7 @@ V1 is intentionally small but usable:
 - `POST /connect-database` connects SQLite, PostgreSQL, or MySQL through SQLMind-MCP.
 - `GET /schema` returns discovered tables and columns from SQLMind-MCP.
 - `POST /ask` fetches schema from MCP, generates SQL through NVIDIA NIM, validates it, executes through MCP, and explains the results.
+- `POST /analyze` generates a multi-step analysis plan through NVIDIA NIM, validates and executes each SELECT query through SQLMind-MCP, and returns a final insight report.
 - `POST /query` validates caller-provided SQL and executes it through SQLMind-MCP.
 
 ## Next Milestones

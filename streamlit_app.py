@@ -79,6 +79,22 @@ def ask_backend(
     return response.json(), None
 
 
+def analyze_backend(question: str, limit: int) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        response = requests.post(
+            api_url("/analyze"),
+            json={"question": question, "limit": limit},
+            timeout=REQUEST_TIMEOUT_SECONDS * 3,
+        )
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        detail = _error_detail(error.response)
+        return None, detail or str(error)
+    except requests.RequestException as error:
+        return None, str(error)
+    return response.json(), None
+
+
 def connect_database_backend(config: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     safe_config = {key: value for key, value in config.items() if value not in (None, "")}
     try:
@@ -114,6 +130,8 @@ def ensure_session_state() -> None:
         st.session_state.connected_database = "Default demo SQLite database"
     if "last_result" not in st.session_state:
         st.session_state.last_result = None
+    if "last_analysis" not in st.session_state:
+        st.session_state.last_analysis = None
     if "conversation_memory" not in st.session_state:
         st.session_state.conversation_memory = []
 
@@ -602,6 +620,59 @@ def render_result(payload: dict[str, Any]) -> None:
         )
 
 
+def render_analysis(payload: dict[str, Any]) -> None:
+    st.markdown('<div class="section-heading">Analysis Plan</div>', unsafe_allow_html=True)
+    for index, step in enumerate(payload.get("analysis_plan", []), start=1):
+        card(
+            f"Step {index}: {step.get('step_title', '')}",
+            f"<p>{html.escape(step.get('purpose', ''))}</p>",
+        )
+
+    st.markdown('<div class="section-heading">Executed Steps</div>', unsafe_allow_html=True)
+    for index, step in enumerate(payload.get("executed_steps", []), start=1):
+        step_title = html.escape(step.get("step_title", ""))
+        purpose = html.escape(step.get("purpose", ""))
+        sql_query = html.escape(step.get("sql_query", ""))
+        st.markdown(
+            f"""
+            <div class="card sql-card">
+                <div class="card-title">Step {index}: {step_title}</div>
+                <p class="muted">{purpose}</p>
+                <pre>{sql_query}</pre>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if not step.get("success"):
+            error_card(step.get("error", "Step failed."))
+            continue
+
+        result_payload = {"results": step.get("results", {})}
+        df = result_dataframe(result_payload)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        figure, chart_error = build_chart(df, "Auto")
+        if figure is not None:
+            figure.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=20, r=20, t=35, b=20),
+            )
+            st.plotly_chart(figure, use_container_width=True)
+        elif chart_error:
+            st.info(chart_error)
+
+    st.markdown('<div class="section-heading">Result Summaries</div>', unsafe_allow_html=True)
+    for summary in payload.get("result_summaries", []):
+        st.markdown(f"- {summary}")
+
+    st.markdown('<div class="section-heading">Chart Suggestions</div>', unsafe_allow_html=True)
+    for suggestion in payload.get("chart_suggestions", []):
+        st.markdown(f"- {suggestion}")
+
+    card("Final Insight Report", f"<p>{html.escape(payload.get('final_insight_report', ''))}</p>")
+
+
 def main() -> None:
     load_dotenv()
     print(f"SQLMind-Agent Streamlit Python executable: {sys.executable}")
@@ -635,9 +706,19 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
+    mode = st.radio(
+        "Mode",
+        ["Ask Mode", "Smart Analysis Mode"],
+        horizontal=True,
+    )
+
     question = st.text_area(
         "Natural language input",
-        placeholder="Example: Show average marks by course for second-year students",
+        placeholder=(
+            "Example: Show average marks by course for second-year students"
+            if mode == "Ask Mode"
+            else "Example: Analyze student performance"
+        ),
         height=110,
     )
 
@@ -646,12 +727,13 @@ def main() -> None:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50, step=10)
     with controls_right:
         st.write("")
-        ask_clicked = st.button("Ask", use_container_width=False, disabled=not connected)
+        action_label = "Ask" if mode == "Ask Mode" else "Run Smart Analysis"
+        ask_clicked = st.button(action_label, use_container_width=False, disabled=not connected)
 
     if not connected:
         st.error("FastAPI backend is not running. Start it on port 8001, then refresh this page.")
 
-    if ask_clicked:
+    if ask_clicked and mode == "Ask Mode":
         if not question.strip():
             st.warning("Enter a question before asking SQLMind.")
             return
@@ -672,6 +754,7 @@ def main() -> None:
 
         if payload:
             st.session_state.last_result = payload
+            st.session_state.last_analysis = None
             append_conversation_memory(payload)
             st.session_state.query_history.append(
                 {
@@ -681,8 +764,29 @@ def main() -> None:
                 }
             )
 
+    if ask_clicked and mode == "Smart Analysis Mode":
+        if not question.strip():
+            st.warning("Enter an analysis question before running Smart Analysis.")
+            return
+
+        with st.spinner("Planning and running smart analysis..."):
+            payload, error = analyze_backend(question.strip(), int(limit))
+
+        if error:
+            if error == READ_ONLY_MODE_MESSAGE:
+                error_card(READ_ONLY_MODE_MESSAGE)
+            else:
+                st.error(error)
+            return
+
+        if payload:
+            st.session_state.last_analysis = payload
+            st.session_state.last_result = None
+
     if st.session_state.last_result:
         render_result(st.session_state.last_result)
+    if st.session_state.last_analysis:
+        render_analysis(st.session_state.last_analysis)
 
 
 if __name__ == "__main__":

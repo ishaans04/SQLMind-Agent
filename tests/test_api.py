@@ -1,13 +1,21 @@
 from fastapi.testclient import TestClient
 
-from sqlmind_agent.api import app, get_connection_mcp_client, get_mcp_client, get_nim_client
+from sqlmind_agent.api import (
+    app,
+    get_analysis_planner,
+    get_connection_mcp_client,
+    get_mcp_client,
+    get_nim_client,
+)
 from sqlmind_agent.config import Settings, get_settings
 from sqlmind_agent.mcp_client import MCPClientError
 from sqlmind_agent.nim_client import MissingNvidiaApiKeyError
 from sqlmind_agent.safety import READ_ONLY_MODE_MESSAGE
 from sqlmind_agent.schemas import (
+    AnalysisPlanStep,
     ColumnInfo,
     ConnectDatabaseRequest,
+    ExecutedAnalysisStep,
     QueryResults,
     SchemaResponse,
     TableInfo,
@@ -52,6 +60,8 @@ class MockMCPClient:
 
     def run_select_query(self, sql: str) -> QueryResults:
         self.last_sql = sql
+        if "bad_table" in sql:
+            raise MCPClientError("Requested table does not exist.")
         return self.results
 
 
@@ -116,6 +126,43 @@ class ExplodingNIMClient:
 
     def explain_results(self, question: str, sql: str, results: dict) -> str:
         raise AssertionError("explain_results should not be called for blocked prompts.")
+
+
+class MockAnalysisPlanner:
+    def __init__(self, include_failed_step: bool = False):
+        self.include_failed_step = include_failed_step
+
+    def generate_plan(self, question: str, schema: dict) -> list[AnalysisPlanStep]:
+        steps = [
+            AnalysisPlanStep(
+                step_title="Sales by region",
+                purpose="Compare regional sales.",
+                sql_query="SELECT region, SUM(amount) AS total_sales FROM sales GROUP BY region",
+            ),
+            AnalysisPlanStep(
+                step_title="Sales by product",
+                purpose="Compare product sales.",
+                sql_query="SELECT product, SUM(amount) AS total_sales FROM sales GROUP BY product",
+            ),
+            AnalysisPlanStep(
+                step_title="Total sales",
+                purpose="Compute total sales.",
+                sql_query="SELECT SUM(amount) AS total_sales FROM sales",
+            ),
+        ]
+        if self.include_failed_step:
+            steps[1] = AnalysisPlanStep(
+                step_title="Broken step",
+                purpose="Exercise graceful failure.",
+                sql_query="SELECT * FROM bad_table",
+            )
+        return steps
+
+    def final_report(self, question: str, executed_steps: list[ExecutedAnalysisStep]) -> str:
+        failures = [step for step in executed_steps if not step.success]
+        if failures:
+            return "Analysis completed with one failed step."
+        return "Regional and product sales were analyzed successfully."
 
 
 def clear_overrides() -> None:
@@ -294,6 +341,49 @@ def test_ask_returns_graceful_error_when_nvidia_key_missing() -> None:
 
     assert response.status_code == 503
     assert "NVIDIA_API_KEY is missing" in response.json()["detail"]
+
+
+def test_analyze_executes_plan_and_returns_report() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=10)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_analysis_planner] = lambda: MockAnalysisPlanner()
+
+    client = TestClient(app)
+    response = client.post("/analyze", json={"question": "Analyze sales performance", "limit": 10})
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["question"] == "Analyze sales performance"
+    assert len(payload["analysis_plan"]) == 3
+    assert len(payload["executed_steps"]) == 3
+    assert all(step["success"] for step in payload["executed_steps"])
+    assert (
+        payload["final_insight_report"]
+        == "Regional and product sales were analyzed successfully."
+    )
+    assert payload["chart_suggestions"]
+
+
+def test_analyze_continues_when_one_step_fails() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=10)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_analysis_planner] = lambda: MockAnalysisPlanner(
+        include_failed_step=True
+    )
+
+    client = TestClient(app)
+    response = client.post("/analyze", json={"question": "Analyze sales performance", "limit": 10})
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["executed_steps"][1]["success"] is False
+    assert "bad_table" in payload["executed_steps"][1]["sql_query"]
+    assert payload["executed_steps"][2]["success"] is True
+    assert payload["final_insight_report"] == "Analysis completed with one failed step."
 
 
 def test_schema_returns_graceful_error_when_mcp_fails() -> None:
