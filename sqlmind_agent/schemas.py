@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,22 @@ class TableInfo(BaseModel):
 
 class SchemaResponse(BaseModel):
     tables: list[TableInfo]
+
+
+class ConnectDatabaseRequest(BaseModel):
+    db_type: Literal["sqlite", "postgresql", "mysql"]
+    sqlite_file_path: str | None = Field(default=None, max_length=1_000)
+    host: str | None = Field(default=None, max_length=255)
+    port: int | None = Field(default=None, ge=1, le=65_535)
+    database_name: str | None = Field(default=None, max_length=255)
+    username: str | None = Field(default=None, max_length=255)
+    password: str | None = Field(default=None, max_length=1_000)
+
+
+class ConnectDatabaseResponse(BaseModel):
+    success: bool
+    db_type: str
+    message: str
 
 
 class AskRequest(BaseModel):

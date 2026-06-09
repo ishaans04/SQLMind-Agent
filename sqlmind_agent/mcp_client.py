@@ -9,7 +9,13 @@ from typing import Any
 import anyio
 
 from sqlmind_agent.config import Settings, get_settings
-from sqlmind_agent.schemas import ColumnInfo, QueryResults, SchemaResponse, TableInfo
+from sqlmind_agent.schemas import (
+    ColumnInfo,
+    ConnectDatabaseRequest,
+    QueryResults,
+    SchemaResponse,
+    TableInfo,
+)
 
 
 class MCPClientError(RuntimeError):
@@ -17,12 +23,27 @@ class MCPClientError(RuntimeError):
 
 
 class SQLMindMCPClient:
-    def __init__(self, server_path: Path):
+    def __init__(
+        self,
+        server_path: Path,
+        database_config: ConnectDatabaseRequest | None = None,
+    ):
         self.server_path = server_path
+        self.database_config = database_config
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> SQLMindMCPClient:
-        return cls(settings.mcp_server_path)
+    def from_settings(
+        cls,
+        settings: Settings,
+        database_config: ConnectDatabaseRequest | None = None,
+    ) -> SQLMindMCPClient:
+        return cls(settings.mcp_server_path, database_config)
+
+    def connect_database(self, config: ConnectDatabaseRequest) -> str:
+        payload = self._call_tool("connect_database", {"config": _connection_config(config)})
+        if not payload.get("success"):
+            raise MCPClientError(payload.get("error", "SQLMind-MCP failed to connect database."))
+        return str(payload.get("message", "Database connected."))
 
     def get_database_schema(self) -> SchemaResponse:
         payload = self._call_tool("get_database_schema", {})
@@ -64,6 +85,19 @@ class SQLMindMCPClient:
             async with stdio_client(server_params) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
+                    if self.database_config is not None and tool_name != "connect_database":
+                        connect_result = await session.call_tool(
+                            "connect_database",
+                            arguments={"config": _connection_config(self.database_config)},
+                        )
+                        connect_payload = _extract_payload(connect_result)
+                        if not connect_payload.get("success"):
+                            raise MCPClientError(
+                                connect_payload.get(
+                                    "error",
+                                    "SQLMind-MCP failed to connect database.",
+                                )
+                            )
                     result = await session.call_tool(tool_name, arguments=arguments)
         except MCPClientError:
             raise
@@ -79,6 +113,17 @@ def get_database_schema() -> SchemaResponse:
 
 def run_select_query(sql: str) -> QueryResults:
     return SQLMindMCPClient.from_settings(get_settings()).run_select_query(sql)
+
+
+def _connection_config(config: ConnectDatabaseRequest) -> dict[str, Any]:
+    payload = config.model_dump(exclude_none=True)
+    sqlite_file_path = payload.get("sqlite_file_path")
+    if config.db_type == "sqlite" and isinstance(sqlite_file_path, str):
+        path = Path(sqlite_file_path).expanduser()
+        if not path.is_absolute():
+            path = Path.cwd() / path
+        payload["sqlite_file_path"] = str(path.resolve())
+    return payload
 
 
 def _extract_payload(result: Any) -> dict[str, Any]:

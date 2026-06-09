@@ -1,10 +1,11 @@
 # SQLMind-Agent
 
-SQLMind-Agent is a local, read-only SQL assistant. It exposes a small FastAPI service that calls SQLMind-MCP for database schema and query execution, uses NVIDIA NIM to translate natural-language questions into safe `SELECT` queries, and returns generated SQL, rows, and an AI explanation.
+SQLMind-Agent is a local, read-only SQL assistant. It exposes a small FastAPI service that calls SQLMind-MCP for database connection, schema, and query execution, uses NVIDIA NIM to translate natural-language questions into safe `SELECT` queries, and returns generated SQL, rows, and an AI explanation.
 
 The repository was scaffolded from an empty `PRD.md`, so V1 makes conservative assumptions:
 
 - SQLMind-MCP is treated as an external local tool server over stdio.
+- SQLite, PostgreSQL, and MySQL connections are initiated through SQLMind-MCP.
 - Read-only SQL execution only.
 - NVIDIA NIM integration for SQL generation and result explanation.
 - Existing safety validation still blocks non-`SELECT` SQL before execution.
@@ -50,6 +51,14 @@ streamlit run streamlit_app.py
 
 The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows backend status, database schema, query history, generated SQL, AI explanation, and result rows.
 
+The sidebar includes a database connection panel:
+
+- SQLite: enter a `.db` path or upload a `.db`/`.sqlite` file.
+- PostgreSQL: host, port `5432`, database name, username, and password.
+- MySQL: host, port `3306`, database name, username, and password.
+
+Passwords are sent only to the backend connection endpoint and are never displayed in responses or query history. Uploaded SQLite files are staged under `data/uploads/`, which is ignored by git.
+
 `POST /ask` returns:
 
 ```json
@@ -74,6 +83,7 @@ SQLMIND_DATABASE_PATH=data/demo.db
 SQLMIND_DEFAULT_LIMIT=50
 SQLMIND_MCP_SERVER_PATH=../SQLMind-MCP/server.py
 FASTAPI_BASE_URL=http://127.0.0.1:8001
+# The app uses the SQLMind-MCP default demo SQLite database until /connect-database is called.
 NVIDIA_API_KEY=
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_MODEL=meta/llama-3.1-8b-instruct
@@ -83,6 +93,7 @@ If `NVIDIA_API_KEY` is missing, `/ask` returns a graceful `503` error. `/schema`
 
 If SQLMind-MCP cannot start or respond, the API returns a graceful `503` error. SQLMind-Agent does not modify SQLMind-MCP; it starts the configured `server.py` with the official MCP Python SDK stdio client and calls:
 
+- `connect_database`
 - `get_database_schema`
 - `run_select_query`
 
@@ -110,6 +121,7 @@ tests/
 V1 is intentionally small but usable:
 
 - `GET /health` reports service status.
+- `POST /connect-database` connects SQLite, PostgreSQL, or MySQL through SQLMind-MCP.
 - `GET /schema` returns discovered tables and columns from SQLMind-MCP.
 - `POST /ask` fetches schema from MCP, generates SQL through NVIDIA NIM, validates it, executes through MCP, and explains the results.
 - `POST /query` validates caller-provided SQL and executes it through SQLMind-MCP.

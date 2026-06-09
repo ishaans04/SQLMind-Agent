@@ -1,10 +1,17 @@
 from fastapi.testclient import TestClient
 
-from sqlmind_agent.api import app, get_mcp_client, get_nim_client
+from sqlmind_agent.api import app, get_connection_mcp_client, get_mcp_client, get_nim_client
 from sqlmind_agent.config import Settings, get_settings
 from sqlmind_agent.mcp_client import MCPClientError
 from sqlmind_agent.nim_client import MissingNvidiaApiKeyError
-from sqlmind_agent.schemas import ColumnInfo, QueryResults, SchemaResponse, TableInfo
+from sqlmind_agent.safety import READ_ONLY_MODE_MESSAGE
+from sqlmind_agent.schemas import (
+    ColumnInfo,
+    ConnectDatabaseRequest,
+    QueryResults,
+    SchemaResponse,
+    TableInfo,
+)
 
 SALES_SCHEMA = SchemaResponse(
     tables=[
@@ -34,6 +41,11 @@ class MockMCPClient:
     def __init__(self, results: QueryResults = SALES_RESULTS):
         self.results = results
         self.last_sql: str | None = None
+        self.connected_config: ConnectDatabaseRequest | None = None
+
+    def connect_database(self, config: ConnectDatabaseRequest) -> str:
+        self.connected_config = config
+        return f"Connected to {config.db_type} database."
 
     def get_database_schema(self) -> SchemaResponse:
         return SALES_SCHEMA
@@ -44,6 +56,9 @@ class MockMCPClient:
 
 
 class FailingMCPClient:
+    def connect_database(self, config: ConnectDatabaseRequest) -> str:
+        raise MCPClientError("SQLMind-MCP could not connect database.")
+
     def get_database_schema(self) -> SchemaResponse:
         raise MCPClientError("SQLMind-MCP could not start or respond.")
 
@@ -80,13 +95,82 @@ class MissingKeyNIMClient:
         raise AssertionError("explain_results should not be called when SQL generation fails.")
 
 
+class ExplodingNIMClient:
+    def generate_sql(self, question: str, schema: dict) -> str:
+        raise AssertionError("generate_sql should not be called for blocked prompts.")
+
+    def explain_results(self, question: str, sql: str, results: dict) -> str:
+        raise AssertionError("explain_results should not be called for blocked prompts.")
+
+
+def clear_overrides() -> None:
+    app.dependency_overrides.clear()
+    if hasattr(app.state, "database_config"):
+        del app.state.database_config
+
+
+def test_connect_database_uses_mcp_and_hides_password() -> None:
+    app.dependency_overrides[get_connection_mcp_client] = lambda: MockMCPClient()
+
+    client = TestClient(app)
+    response = client.post(
+        "/connect-database",
+        json={
+            "db_type": "postgresql",
+            "host": "localhost",
+            "port": 5432,
+            "database_name": "school",
+            "username": "admin",
+            "password": "secret",
+        },
+    )
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "success": True,
+        "db_type": "postgresql",
+        "message": "Connected to postgresql database.",
+    }
+    assert "secret" not in response.text
+
+
+def test_connect_database_requires_sqlite_file_path() -> None:
+    app.dependency_overrides[get_connection_mcp_client] = lambda: MockMCPClient()
+
+    client = TestClient(app)
+    response = client.post("/connect-database", json={"db_type": "sqlite"})
+
+    clear_overrides()
+
+    assert response.status_code == 400
+    assert "sqlite_file_path is required" in response.json()["detail"]
+
+
+def test_connect_database_returns_graceful_error_when_mcp_fails() -> None:
+    app.dependency_overrides[get_connection_mcp_client] = lambda: FailingMCPClient()
+
+    client = TestClient(app)
+    response = client.post(
+        "/connect-database",
+        json={"db_type": "sqlite", "sqlite_file_path": "data/demo.db"},
+    )
+
+    clear_overrides()
+
+    assert response.status_code == 503
+    assert "could not connect" in response.json()["detail"]
+
+
 def test_schema_uses_mcp_response() -> None:
     app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
 
     client = TestClient(app)
     response = client.get("/schema")
 
-    app.dependency_overrides.clear()
+    clear_overrides()
 
     assert response.status_code == 200
     assert response.json()["tables"][0]["name"] == "sales"
@@ -102,7 +186,7 @@ def test_ask_sales_by_region() -> None:
     client = TestClient(app)
     response = client.post("/ask", json={"question": "show total sales by region"})
 
-    app.dependency_overrides.clear()
+    clear_overrides()
 
     assert response.status_code == 200
     payload = response.json()
@@ -121,9 +205,23 @@ def test_ask_blocks_unsafe_generated_sql() -> None:
     client = TestClient(app)
     response = client.post("/ask", json={"question": "delete sales"})
 
-    app.dependency_overrides.clear()
+    clear_overrides()
 
     assert response.status_code == 400
+
+
+def test_ask_blocks_mutation_prompt_before_llm() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings()
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_nim_client] = lambda: ExplodingNIMClient()
+
+    client = TestClient(app)
+    response = client.post("/ask", json={"question": "drop the sales table"})
+
+    clear_overrides()
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == READ_ONLY_MODE_MESSAGE
 
 
 def test_ask_returns_graceful_error_when_nvidia_key_missing() -> None:
@@ -134,7 +232,7 @@ def test_ask_returns_graceful_error_when_nvidia_key_missing() -> None:
     client = TestClient(app)
     response = client.post("/ask", json={"question": "show sales"})
 
-    app.dependency_overrides.clear()
+    clear_overrides()
 
     assert response.status_code == 503
     assert "NVIDIA_API_KEY is missing" in response.json()["detail"]
@@ -146,7 +244,7 @@ def test_schema_returns_graceful_error_when_mcp_fails() -> None:
     client = TestClient(app)
     response = client.get("/schema")
 
-    app.dependency_overrides.clear()
+    clear_overrides()
 
     assert response.status_code == 503
     assert "SQLMind-MCP could not start" in response.json()["detail"]
@@ -159,7 +257,7 @@ def test_query_uses_mcp_response() -> None:
     client = TestClient(app)
     response = client.post("/query", json={"sql": "SELECT * FROM sales"})
 
-    app.dependency_overrides.clear()
+    clear_overrides()
 
     assert response.status_code == 200
     payload = response.json()
@@ -174,6 +272,6 @@ def test_query_blocks_writes() -> None:
     client = TestClient(app)
     response = client.post("/query", json={"sql": "DROP TABLE sales"})
 
-    app.dependency_overrides.clear()
+    clear_overrides()
 
     assert response.status_code == 400

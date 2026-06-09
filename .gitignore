@@ -8,6 +8,7 @@ htmlcov/
 data/*.db
 data/*.sqlite
 data/*.log
+data/uploads/
 dist/
 build/
 *.egg-info/

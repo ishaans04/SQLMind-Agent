@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import html
 import os
+import sys
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import requests
 import streamlit as st
 
 DEFAULT_FASTAPI_BASE_URL = "http://127.0.0.1:8001"
 REQUEST_TIMEOUT_SECONDS = 12
+UPLOAD_DIR = Path("data/uploads")
+READ_ONLY_MODE_MESSAGE = "Command not allowed. SQLMind Agent is running in read-only mode."
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
@@ -63,6 +67,23 @@ def ask_backend(question: str, limit: int) -> tuple[dict[str, Any] | None, str |
     return response.json(), None
 
 
+def connect_database_backend(config: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    safe_config = {key: value for key, value in config.items() if value not in (None, "")}
+    try:
+        response = requests.post(
+            api_url("/connect-database"),
+            json=safe_config,
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        detail = _error_detail(error.response)
+        return None, detail or str(error)
+    except requests.RequestException as error:
+        return None, str(error)
+    return response.json(), None
+
+
 def _error_detail(response: requests.Response | None) -> str | None:
     if response is None:
         return None
@@ -77,6 +98,8 @@ def _error_detail(response: requests.Response | None) -> str | None:
 def ensure_session_state() -> None:
     if "query_history" not in st.session_state:
         st.session_state.query_history = []
+    if "connected_database" not in st.session_state:
+        st.session_state.connected_database = "Default demo SQLite database"
 
 
 def render_css() -> None:
@@ -174,6 +197,16 @@ def render_css() -> None:
             background: rgba(255,82,82,.11);
         }
 
+        .error-card {
+            background: rgba(255, 82, 82, .13);
+            border: 1px solid rgba(255, 120, 120, .38);
+            border-radius: 8px;
+            color: #ffd6d6;
+            padding: 1rem;
+            font-weight: 750;
+            margin-bottom: 1rem;
+        }
+
         .sql-card pre {
             white-space: pre-wrap;
             color: #d6ffe8;
@@ -213,7 +246,9 @@ def render_css() -> None:
         }
 
         [data-testid="stTextArea"] textarea,
-        [data-testid="stNumberInput"] input {
+        [data-testid="stNumberInput"] input,
+        [data-testid="stTextInput"] input,
+        [data-testid="stSelectbox"] div {
             background: var(--panel);
             color: var(--text);
             border: 1px solid var(--line);
@@ -237,6 +272,13 @@ def card(title: str, body: str) -> None:
     )
 
 
+def error_card(message: str) -> None:
+    st.markdown(
+        f'<div class="error-card">{html.escape(message)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def render_schema(schema: dict[str, Any] | None, error: str | None) -> None:
     st.sidebar.markdown("### Database Schema")
     if error:
@@ -249,10 +291,65 @@ def render_schema(schema: dict[str, Any] | None, error: str | None) -> None:
     for table in schema.get("tables", []):
         with st.sidebar.expander(table.get("name", "table"), expanded=False):
             for column in table.get("columns", []):
-                label = f"{column.get('name')} · {column.get('type')}"
+                label = f"{column.get('name')} - {column.get('type')}"
                 if column.get("primary_key"):
-                    label += " · PK"
+                    label += " - PK"
                 st.caption(label)
+
+
+def render_connection_panel(connected: bool) -> None:
+    st.sidebar.markdown("### Database Connection")
+    st.sidebar.caption(f"Connected: {st.session_state.connected_database}")
+
+    db_type_label = st.sidebar.selectbox("Database type", ["SQLite", "PostgreSQL", "MySQL"])
+    db_type = db_type_label.lower()
+    config: dict[str, Any] = {"db_type": db_type}
+
+    if db_type == "sqlite":
+        sqlite_file_path = st.sidebar.text_input("SQLite .db file path", value="data/demo.db")
+        uploaded_file = st.sidebar.file_uploader(
+            "Upload SQLite .db",
+            type=["db", "sqlite", "sqlite3"],
+        )
+        if uploaded_file is not None:
+            sqlite_file_path = save_uploaded_database(uploaded_file)
+            st.sidebar.caption(f"Uploaded file staged at {sqlite_file_path}")
+        config["sqlite_file_path"] = sqlite_file_path
+    else:
+        default_port = 5432 if db_type == "postgresql" else 3306
+        config["host"] = st.sidebar.text_input("Host", value="localhost")
+        config["port"] = int(
+            st.sidebar.number_input("Port", min_value=1, max_value=65_535, value=default_port)
+        )
+        config["database_name"] = st.sidebar.text_input("Database name")
+        config["username"] = st.sidebar.text_input("Username")
+        config["password"] = st.sidebar.text_input("Password", type="password")
+
+    if st.sidebar.button("Connect Database", disabled=not connected, use_container_width=True):
+        payload, error = connect_database_backend(config)
+        if error:
+            st.sidebar.error(error)
+            return
+        if payload:
+            st.session_state.connected_database = connection_label(config)
+            st.session_state.query_history = []
+            st.sidebar.success(payload.get("message", "Database connected."))
+            st.rerun()
+
+
+def save_uploaded_database(uploaded_file: Any) -> str:
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    original_name = Path(uploaded_file.name).name.replace(" ", "_")
+    file_path = UPLOAD_DIR / f"{uuid4().hex}_{original_name}"
+    file_path.write_bytes(uploaded_file.getbuffer())
+    return str(file_path)
+
+
+def connection_label(config: dict[str, Any]) -> str:
+    db_type = config.get("db_type")
+    if db_type == "sqlite":
+        return f"SQLite - {Path(str(config.get('sqlite_file_path', ''))).name}"
+    return f"{str(db_type).title()} - {config.get('database_name')}@{config.get('host')}"
 
 
 def render_history() -> None:
@@ -299,6 +396,7 @@ def render_result(payload: dict[str, Any]) -> None:
 
 def main() -> None:
     load_dotenv()
+    print(f"SQLMind-Agent Streamlit Python executable: {sys.executable}")
     st.set_page_config(page_title="SQLMind Agent", layout="wide", initial_sidebar_state="expanded")
     ensure_session_state()
     render_css()
@@ -314,6 +412,7 @@ def main() -> None:
             unsafe_allow_html=True,
         )
         st.caption(os.getenv("FASTAPI_BASE_URL", DEFAULT_FASTAPI_BASE_URL))
+        render_connection_panel(connected)
         render_schema(schema_payload, schema_error)
         render_history()
 
@@ -352,7 +451,10 @@ def main() -> None:
             payload, error = ask_backend(question.strip(), int(limit))
 
         if error:
-            st.error(error)
+            if error == READ_ONLY_MODE_MESSAGE:
+                error_card(READ_ONLY_MODE_MESSAGE)
+            else:
+                st.error(error)
             return
 
         if payload:
