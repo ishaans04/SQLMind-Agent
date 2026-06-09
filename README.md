@@ -10,6 +10,19 @@ The repository was scaffolded from an empty `PRD.md`, so V1 makes conservative a
 - NVIDIA NIM integration for SQL generation and result explanation.
 - Existing safety validation still blocks non-`SELECT` SQL before execution.
 
+## Key Features
+
+- Natural Language → SQL
+- Multi-Database Support (SQLite, MySQL, PostgreSQL)
+- MCP Integration
+- NVIDIA NIM Integration
+- Smart Analytics Agent
+- Conversational Memory
+- Interactive Charts
+- CSV & Excel Export
+- Enterprise Streamlit Dashboard
+- Read-Only Security Layer
+
 ## Quick Start
 
 ```powershell
@@ -26,6 +39,37 @@ Then open:
 
 - API health: `http://127.0.0.1:8001/health`
 - OpenAPI docs: `http://127.0.0.1:8001/docs`
+
+## Tech Stack
+
+### Frontend
+- Streamlit
+
+### Backend
+- FastAPI
+
+### AI Layer
+- NVIDIA NIM
+- Llama 3.1 8B
+
+### Database Layer
+- SQLite
+- MySQL
+- PostgreSQL
+
+### Protocol
+- Model Context Protocol (MCP)
+
+### Analytics
+- Plotly
+- Pandas
+
+### Testing
+- Pytest
+- Ruff
+
+### CI/CD
+- GitHub Actions
 
 ## Example Request
 
@@ -49,7 +93,7 @@ python -m uvicorn sqlmind_agent.api:app --reload --port 8001
 streamlit run streamlit_app.py
 ```
 
-The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows backend status, database schema, query history, generated SQL, AI explanation, result rows, visual analytics, and exports.
+The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows an enterprise-style analytics dashboard with backend, MCP, database, and NIM status pills; database schema; query history; conversation memory; generated SQL; AI explanation; result rows; visual analytics; and exports.
 
 The sidebar includes a database connection panel:
 
@@ -58,6 +102,8 @@ The sidebar includes a database connection panel:
 - MySQL: host, port `3306`, database name, username, and password.
 
 Passwords are sent only to the backend connection endpoint and are never displayed in responses or query history. Uploaded SQLite files are staged under `data/uploads/`, which is ignored by git.
+
+For screenshots or demos, start both terminals above, open the Streamlit URL printed in the terminal, connect the demo SQLite database, and run an example question such as `Show attendance by student`.
 
 ### Conversational Memory
 
