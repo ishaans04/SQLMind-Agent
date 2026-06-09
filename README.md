@@ -18,23 +18,37 @@ pip install -e ".[dev]"
 python scripts/init_demo_db.py
 Copy-Item .env.example .env
 # Edit .env and set NVIDIA_API_KEY and SQLMIND_MCP_SERVER_PATH if needed.
-uvicorn sqlmind_agent.api:app --reload
+uvicorn sqlmind_agent.api:app --reload --port 8001
 ```
 
 Then open:
 
-- API health: `http://127.0.0.1:8000/health`
-- OpenAPI docs: `http://127.0.0.1:8000/docs`
+- API health: `http://127.0.0.1:8001/health`
+- OpenAPI docs: `http://127.0.0.1:8001/docs`
 
 ## Example Request
 
 ```powershell
 Invoke-RestMethod `
   -Method Post `
-  -Uri http://127.0.0.1:8000/ask `
+  -Uri http://127.0.0.1:8001/ask `
   -ContentType "application/json" `
   -Body '{"question":"show total sales by region","limit":10}'
 ```
+
+## Streamlit UI
+
+Run the API and UI in two terminals:
+
+```powershell
+python -m uvicorn sqlmind_agent.api:app --reload --port 8001
+```
+
+```powershell
+streamlit run streamlit_app.py
+```
+
+The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows backend status, database schema, query history, generated SQL, AI explanation, and result rows.
 
 `POST /ask` returns:
 
@@ -59,6 +73,7 @@ Values are read from `.env`.
 SQLMIND_DATABASE_PATH=data/demo.db
 SQLMIND_DEFAULT_LIMIT=50
 SQLMIND_MCP_SERVER_PATH=../SQLMind-MCP/server.py
+FASTAPI_BASE_URL=http://127.0.0.1:8001
 NVIDIA_API_KEY=
 NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
 NVIDIA_MODEL=meta/llama-3.1-8b-instruct
@@ -85,6 +100,7 @@ sqlmind_agent/
   schemas.py          API models
 scripts/
   init_demo_db.py     Creates data/demo.db
+streamlit_app.py      Streamlit dashboard UI
 tests/
   test_*.py           Unit and API tests
 ```
