@@ -214,6 +214,37 @@ tests/
   test_*.py           Unit and API tests
 ```
 
+
+## Example Workflow
+
+User:
+Show average marks by branch
+
+↓
+
+NVIDIA NIM generates SQL
+
+↓
+
+Safety Layer validates query
+
+↓
+
+SQLMind-MCP executes query
+
+↓
+
+Results returned
+
+↓
+
+Charts generated
+
+↓
+
+AI explanation generated
+
+
 ## V1 Scope
 
 V1 is intentionally small but usable:
