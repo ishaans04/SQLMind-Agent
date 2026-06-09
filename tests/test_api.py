@@ -73,7 +73,12 @@ class MockNIMClient:
     ):
         self.sql = sql
 
-    def generate_sql(self, question: str, schema: dict) -> str:
+    def generate_sql(
+        self,
+        question: str,
+        schema: dict,
+        conversation_history: list[dict] | None = None,
+    ) -> str:
         assert question
         assert schema["tables"][0]["name"] == "sales"
         return self.sql
@@ -86,7 +91,12 @@ class MockNIMClient:
 
 
 class MissingKeyNIMClient:
-    def generate_sql(self, question: str, schema: dict) -> str:
+    def generate_sql(
+        self,
+        question: str,
+        schema: dict,
+        conversation_history: list[dict] | None = None,
+    ) -> str:
         raise MissingNvidiaApiKeyError(
             "NVIDIA_API_KEY is missing. Add it to .env before using /ask."
         )
@@ -96,7 +106,12 @@ class MissingKeyNIMClient:
 
 
 class ExplodingNIMClient:
-    def generate_sql(self, question: str, schema: dict) -> str:
+    def generate_sql(
+        self,
+        question: str,
+        schema: dict,
+        conversation_history: list[dict] | None = None,
+    ) -> str:
         raise AssertionError("generate_sql should not be called for blocked prompts.")
 
     def explain_results(self, question: str, sql: str, results: dict) -> str:
@@ -195,6 +210,49 @@ def test_ask_sales_by_region() -> None:
     assert payload["results"]["columns"] == ["region", "total_sales"]
     assert payload["results"]["rows"][0] == {"region": "North", "total_sales": 25.0}
     assert payload["explanation"] == "North has the highest total sales in the result set."
+
+
+def test_ask_passes_conversation_history_to_nim() -> None:
+    captured_history: list[dict] | None = None
+
+    class CapturingNIMClient(MockNIMClient):
+        def generate_sql(
+            self,
+            question: str,
+            schema: dict,
+            conversation_history: list[dict] | None = None,
+        ) -> str:
+            nonlocal captured_history
+            captured_history = conversation_history
+            return "SELECT region, SUM(amount) AS total_sales FROM sales GROUP BY region"
+
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=50)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_nim_client] = lambda: CapturingNIMClient()
+
+    client = TestClient(app)
+    response = client.post(
+        "/ask",
+        json={
+            "question": "show only those above 80",
+            "conversation_history": [
+                {
+                    "question": "show marks by student",
+                    "sql": "SELECT student, marks FROM scores",
+                    "columns": ["student", "marks"],
+                    "result_preview": [{"student": "Asha", "marks": 91}],
+                    "explanation": "Asha scored 91.",
+                }
+            ],
+        },
+    )
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    assert captured_history is not None
+    assert captured_history[0]["question"] == "show marks by student"
+    assert captured_history[0]["result_preview"] == [{"student": "Asha", "marks": 91}]
 
 
 def test_ask_blocks_unsafe_generated_sql() -> None:

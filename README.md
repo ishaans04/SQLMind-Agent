@@ -59,6 +59,18 @@ The sidebar includes a database connection panel:
 
 Passwords are sent only to the backend connection endpoint and are never displayed in responses or query history. Uploaded SQLite files are staged under `data/uploads/`, which is ignored by git.
 
+### Conversational Memory
+
+SQLMind stores recent query context in Streamlit session state so follow-up questions can reuse previous results. Stored memory includes:
+
+- Previous user questions
+- Generated SQL
+- Result columns
+- A short result preview
+- AI explanations
+
+This lets users ask follow-ups such as `show only those above 80`, `sort them by marks`, `now group by course`, `compare this with attendance`, or `show top 5 from this`. Use `Clear Memory` in the sidebar to remove the current session memory. Passwords and database credentials are never stored in memory.
+
 ### Visual Analytics
 
 After each successful question, SQLMind displays the result table and a chart section powered by Plotly. Use the chart selector to choose:

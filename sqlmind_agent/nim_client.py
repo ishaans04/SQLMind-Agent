@@ -14,11 +14,14 @@ class NIMClientError(RuntimeError):
 
 
 SQL_SYSTEM_PROMPT = """
-You are SQLMind-Agent, a senior SQLite analyst.
-Generate one read-only SQLite SELECT query for the user's question.
+You are SQLMind-Agent, a senior SQL analyst.
+Generate one read-only SQL query for the user's question.
 Use only the provided schema.
+When the user asks a follow-up question, use the conversation history to resolve references
+such as "those", "them", "this", "above 80", "sort them", "group by course",
+"compare this with attendance", or "top 5 from this".
 Return ONLY SQL. Do not include markdown, code fences, comments, or explanation.
-Only SELECT queries are allowed.
+Only read-only queries are allowed: SELECT, SHOW, DESCRIBE, EXPLAIN, or WITH.
 """.strip()
 
 
@@ -50,13 +53,18 @@ class NIMClient:
             model=settings.nvidia_model,
         )
 
-    def generate_sql(self, question: str, schema: dict[str, Any]) -> str:
+    def generate_sql(
+        self,
+        question: str,
+        schema: dict[str, Any],
+        conversation_history: list[dict[str, Any]] | None = None,
+    ) -> str:
         content = self._chat(
             messages=[
                 {"role": "system", "content": SQL_SYSTEM_PROMPT},
                 {
                     "role": "user",
-                    "content": f"Schema:\n{schema}\n\nQuestion:\n{question}",
+                    "content": build_sql_prompt(question, schema, conversation_history or []),
                 },
             ],
             temperature=0.0,
@@ -110,12 +118,35 @@ class NIMClient:
             raise NIMClientError("NVIDIA NIM returned an unexpected response shape.") from error
 
 
-def generate_sql(question: str, schema: dict[str, Any]) -> str:
-    return NIMClient.from_settings(get_settings()).generate_sql(question, schema)
+def generate_sql(
+    question: str,
+    schema: dict[str, Any],
+    conversation_history: list[dict[str, Any]] | None = None,
+) -> str:
+    return NIMClient.from_settings(get_settings()).generate_sql(
+        question,
+        schema,
+        conversation_history,
+    )
 
 
 def explain_results(question: str, sql: str, results: dict[str, Any]) -> str:
     return NIMClient.from_settings(get_settings()).explain_results(question, sql, results)
+
+
+def build_sql_prompt(
+    question: str,
+    schema: dict[str, Any],
+    conversation_history: list[dict[str, Any]],
+) -> str:
+    history = conversation_history[-5:]
+    return (
+        f"Schema:\n{schema}\n\n"
+        f"Conversation history:\n{history if history else '[]'}\n\n"
+        f"Current question:\n{question}\n\n"
+        "If the current question is a follow-up, adapt the prior SQL using the provided "
+        "history while staying within the current schema and read-only policy."
+    )
 
 
 def _clean_sql(content: str) -> str:

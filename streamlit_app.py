@@ -55,11 +55,19 @@ def get_schema() -> tuple[dict[str, Any] | None, str | None]:
     return response.json(), None
 
 
-def ask_backend(question: str, limit: int) -> tuple[dict[str, Any] | None, str | None]:
+def ask_backend(
+    question: str,
+    limit: int,
+    conversation_history: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, str | None]:
     try:
         response = requests.post(
             api_url("/ask"),
-            json={"question": question, "limit": limit},
+            json={
+                "question": question,
+                "limit": limit,
+                "conversation_history": conversation_history,
+            },
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
         response.raise_for_status()
@@ -106,6 +114,8 @@ def ensure_session_state() -> None:
         st.session_state.connected_database = "Default demo SQLite database"
     if "last_result" not in st.session_state:
         st.session_state.last_result = None
+    if "conversation_memory" not in st.session_state:
+        st.session_state.conversation_memory = []
 
 
 def render_css() -> None:
@@ -488,6 +498,50 @@ def render_history() -> None:
         )
 
 
+def render_conversation_memory() -> None:
+    st.sidebar.markdown("### Conversation Memory")
+    if st.sidebar.button("Clear Memory", use_container_width=True):
+        st.session_state.conversation_memory = []
+        st.session_state.query_history = []
+        st.session_state.last_result = None
+        st.rerun()
+
+    memory = st.session_state.conversation_memory
+    if not memory:
+        st.sidebar.caption("Follow-up context will appear here.")
+        return
+
+    for item in reversed(memory[-5:]):
+        question = html.escape(item.get("question", ""))
+        columns = ", ".join(item.get("columns", [])[:4])
+        st.sidebar.markdown(
+            f"""
+            <div class="history-item">
+                <strong>{question}</strong><br/>
+                <span class="muted">Columns: {html.escape(columns)}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def compact_result_preview(df: pd.DataFrame, max_rows: int = 5) -> list[dict[str, Any]]:
+    return df.head(max_rows).to_dict(orient="records")
+
+
+def append_conversation_memory(payload: dict[str, Any]) -> None:
+    df = result_dataframe(payload)
+    memory_item = {
+        "question": payload.get("question", ""),
+        "sql": payload.get("sql", ""),
+        "columns": list(df.columns),
+        "result_preview": compact_result_preview(df),
+        "explanation": payload.get("explanation", ""),
+    }
+    st.session_state.conversation_memory.append(memory_item)
+    st.session_state.conversation_memory = st.session_state.conversation_memory[-10:]
+
+
 def render_result(payload: dict[str, Any]) -> None:
     sql = html.escape(payload.get("sql", ""))
     explanation = html.escape(payload.get("explanation", ""))
@@ -568,6 +622,7 @@ def main() -> None:
         st.caption(os.getenv("FASTAPI_BASE_URL", DEFAULT_FASTAPI_BASE_URL))
         render_connection_panel(connected)
         render_schema(schema_payload, schema_error)
+        render_conversation_memory()
         render_history()
 
     st.markdown('<div class="app-title">SQLMind Agent</div>', unsafe_allow_html=True)
@@ -602,7 +657,11 @@ def main() -> None:
             return
 
         with st.spinner("Generating SQL and querying the database..."):
-            payload, error = ask_backend(question.strip(), int(limit))
+            payload, error = ask_backend(
+                question.strip(),
+                int(limit),
+                st.session_state.conversation_memory,
+            )
 
         if error:
             if error == READ_ONLY_MODE_MESSAGE:
@@ -613,6 +672,7 @@ def main() -> None:
 
         if payload:
             st.session_state.last_result = payload
+            append_conversation_memory(payload)
             st.session_state.query_history.append(
                 {
                     "question": payload.get("question", question.strip()),

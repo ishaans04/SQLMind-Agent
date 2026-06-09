@@ -101,7 +101,11 @@ def ask(
         question = validate_read_only_prompt(request.question)
         schema_response = mcp_client.get_database_schema()
         schema_dict = schema_response.model_dump()
-        sql = nim_client.generate_sql(question, schema_dict)
+        conversation_history = [
+            item.model_dump()
+            for item in request.conversation_history
+        ]
+        sql = nim_client.generate_sql(question, schema_dict, conversation_history)
         limited_sql = apply_limit(
             validate_read_only_sql(sql),
             request.limit or settings.default_limit,

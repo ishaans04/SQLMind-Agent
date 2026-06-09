@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from sqlmind_agent.nim_client import MissingNvidiaApiKeyError, NIMClient
+from sqlmind_agent.nim_client import MissingNvidiaApiKeyError, NIMClient, build_sql_prompt
 
 
 def test_generate_sql_uses_mocked_nim_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,6 +39,71 @@ def test_generate_sql_uses_mocked_nim_response(monkeypatch: pytest.MonkeyPatch) 
     assert requests[0]["headers"]["Authorization"] == "Bearer test-key"
     assert requests[0]["json"]["model"] == "test-model"
     assert "Return ONLY SQL" in requests[0]["json"]["messages"][0]["content"]
+
+
+def test_generate_sql_prompt_includes_conversation_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    requests: list[dict] = []
+
+    class MockClient:
+        def __init__(self, timeout: float):
+            self.timeout = timeout
+
+        def __enter__(self) -> "MockClient":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def post(self, url: str, headers: dict, json: dict) -> httpx.Response:
+            requests.append(json)
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", url),
+                json={
+                    "choices": [
+                        {"message": {"content": "SELECT * FROM scores WHERE marks > 80"}}
+                    ]
+                },
+            )
+
+    monkeypatch.setattr("sqlmind_agent.nim_client.httpx.Client", MockClient)
+
+    client = NIMClient(api_key="test-key")
+    client.generate_sql(
+        "show only those above 80",
+        {"tables": [{"name": "scores"}]},
+        [
+            {
+                "question": "show marks by student",
+                "sql": "SELECT student, marks FROM scores",
+                "columns": ["student", "marks"],
+                "result_preview": [{"student": "Asha", "marks": 91}],
+                "explanation": "Asha scored 91.",
+            }
+        ],
+    )
+
+    user_prompt = requests[0]["messages"][1]["content"]
+    assert "Conversation history:" in user_prompt
+    assert "show marks by student" in user_prompt
+    assert "show only those above 80" in user_prompt
+    assert "follow-up" in user_prompt
+
+
+def test_build_sql_prompt_limits_history_to_recent_items() -> None:
+    history = [
+        {"question": f"question {index}", "sql": "SELECT 1"}
+        for index in range(7)
+    ]
+
+    prompt = build_sql_prompt("show top 5 from this", {"tables": []}, history)
+
+    assert "question 0" not in prompt
+    assert "question 1" not in prompt
+    assert "question 2" in prompt
+    assert "show top 5 from this" in prompt
 
 
 def test_explain_results_uses_mocked_nim_response(monkeypatch: pytest.MonkeyPatch) -> None:

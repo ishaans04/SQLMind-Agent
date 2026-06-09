@@ -35,9 +35,18 @@ class ConnectDatabaseResponse(BaseModel):
     message: str
 
 
+class ConversationMemoryItem(BaseModel):
+    question: str = Field(max_length=500)
+    sql: str = Field(max_length=5_000)
+    columns: list[str] = Field(default_factory=list)
+    result_preview: list[dict[str, Any]] = Field(default_factory=list)
+    explanation: str = Field(default="", max_length=2_000)
+
+
 class AskRequest(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     limit: int | None = Field(default=None, ge=1, le=500)
+    conversation_history: list[ConversationMemoryItem] = Field(default_factory=list, max_length=10)
 
 
 class QueryRequest(BaseModel):
