@@ -35,10 +35,11 @@ git clone https://github.com/ishaans04/SQLMind-Agent.git
 ```
 
 Expected folder structure:
+```text
 Desktop/
 ├── SQLMind-MCP/
 └── SQLMind-Agent/
-
+```
 
 ### Why is SQLMind-MCP separate?
 
