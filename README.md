@@ -49,7 +49,7 @@ python -m uvicorn sqlmind_agent.api:app --reload --port 8001
 streamlit run streamlit_app.py
 ```
 
-The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows backend status, database schema, query history, generated SQL, AI explanation, and result rows.
+The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows backend status, database schema, query history, generated SQL, AI explanation, result rows, visual analytics, and exports.
 
 The sidebar includes a database connection panel:
 
@@ -58,6 +58,32 @@ The sidebar includes a database connection panel:
 - MySQL: host, port `3306`, database name, username, and password.
 
 Passwords are sent only to the backend connection endpoint and are never displayed in responses or query history. Uploaded SQLite files are staged under `data/uploads/`, which is ignored by git.
+
+### Visual Analytics
+
+After each successful question, SQLMind displays the result table and a chart section powered by Plotly. Use the chart selector to choose:
+
+- Auto
+- Bar Chart
+- Line Chart
+- Pie Chart
+- No Chart
+
+Auto mode chooses a chart from the result shape:
+
+- Category plus numeric values: bar chart
+- Date/time plus numeric values: line chart
+- Few categories plus numeric values: pie chart
+
+If no numeric columns exist or the chart cannot be generated, the UI shows a clear message and keeps the table visible.
+
+### CSV Export
+
+Use `Download CSV` in the export section to save the current query results as `sqlmind_results.csv`.
+
+### Excel Export
+
+Use `Download Excel` in the export section to save the current query results as `sqlmind_results.xlsx`. Excel export uses `openpyxl`.
 
 `POST /ask` returns:
 

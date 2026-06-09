@@ -3,10 +3,13 @@ from __future__ import annotations
 import html
 import os
 import sys
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import pandas as pd
+import plotly.express as px
 import requests
 import streamlit as st
 
@@ -14,6 +17,7 @@ DEFAULT_FASTAPI_BASE_URL = "http://127.0.0.1:8001"
 REQUEST_TIMEOUT_SECONDS = 12
 UPLOAD_DIR = Path("data/uploads")
 READ_ONLY_MODE_MESSAGE = "Command not allowed. SQLMind Agent is running in read-only mode."
+CHART_OPTIONS = ["Auto", "Bar Chart", "Line Chart", "Pie Chart", "No Chart"]
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
@@ -100,6 +104,8 @@ def ensure_session_state() -> None:
         st.session_state.query_history = []
     if "connected_database" not in st.session_state:
         st.session_state.connected_database = "Default demo SQLite database"
+    if "last_result" not in st.session_state:
+        st.session_state.last_result = None
 
 
 def render_css() -> None:
@@ -217,6 +223,12 @@ def render_css() -> None:
             margin: 0;
         }
 
+        .section-heading {
+            font-size: 1rem;
+            font-weight: 800;
+            margin: 1.1rem 0 .65rem;
+        }
+
         .accent {
             color: var(--purple);
             font-weight: 700;
@@ -277,6 +289,109 @@ def error_card(message: str) -> None:
         f'<div class="error-card">{html.escape(message)}</div>',
         unsafe_allow_html=True,
     )
+
+
+def result_dataframe(payload: dict[str, Any]) -> pd.DataFrame:
+    rows = payload.get("results", {}).get("rows", [])
+    return pd.DataFrame(rows)
+
+
+def infer_auto_chart(df: pd.DataFrame) -> str:
+    numeric_columns = numeric_column_names(df)
+    if df.empty or not numeric_columns:
+        return "No Chart"
+
+    date_columns = date_column_names(df)
+    if date_columns:
+        return "Line Chart"
+
+    category_columns = category_column_names(df)
+    if not category_columns:
+        return "No Chart"
+
+    if df[category_columns[0]].nunique(dropna=True) <= 6:
+        return "Pie Chart"
+    return "Bar Chart"
+
+
+def numeric_column_names(df: pd.DataFrame) -> list[str]:
+    return list(df.select_dtypes(include="number").columns)
+
+
+def category_column_names(df: pd.DataFrame) -> list[str]:
+    return [
+        column
+        for column in df.columns
+        if column not in numeric_column_names(df) and column not in date_column_names(df)
+    ]
+
+
+def date_column_names(df: pd.DataFrame) -> list[str]:
+    date_columns: list[str] = []
+    for column in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[column]):
+            date_columns.append(column)
+            continue
+        lowered = str(column).lower()
+        if "date" not in lowered and "time" not in lowered:
+            continue
+        parsed = pd.to_datetime(df[column], errors="coerce")
+        if parsed.notna().any():
+            date_columns.append(column)
+    return date_columns
+
+
+def build_chart(df: pd.DataFrame, chart_choice: str) -> tuple[Any | None, str | None]:
+    chart_type = infer_auto_chart(df) if chart_choice == "Auto" else chart_choice
+    if chart_type == "No Chart":
+        if chart_choice == "No Chart":
+            message = "No chart selected."
+        else:
+            message = "No chartable columns found."
+        return None, message
+
+    numeric_columns = numeric_column_names(df)
+    if not numeric_columns:
+        return None, "No numeric columns exist, so a chart cannot be generated."
+
+    value_column = numeric_columns[0]
+    try:
+        if chart_type == "Line Chart":
+            date_columns = date_column_names(df)
+            if not date_columns:
+                return None, "Line chart needs a date or time column."
+            x_column = date_columns[0]
+            chart_df = df.copy()
+            chart_df[x_column] = pd.to_datetime(chart_df[x_column], errors="coerce")
+            chart_df = chart_df.dropna(subset=[x_column])
+            return px.line(chart_df, x=x_column, y=value_column, markers=True), None
+
+        category_columns = category_column_names(df)
+        if not category_columns:
+            return None, "Chart needs a category column."
+        category_column = category_columns[0]
+
+        if chart_type == "Pie Chart":
+            grouped = df.groupby(category_column, dropna=False)[value_column].sum().reset_index()
+            if len(grouped) > 10:
+                return None, "Pie chart works best with fewer categories."
+            return px.pie(grouped, names=category_column, values=value_column), None
+
+        grouped = df.groupby(category_column, dropna=False)[value_column].sum().reset_index()
+        return px.bar(grouped, x=category_column, y=value_column), None
+    except Exception as error:
+        return None, f"Chart cannot be generated: {error}"
+
+
+def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv(index=False).encode("utf-8")
+
+
+def dataframe_to_excel_bytes(df: pd.DataFrame) -> bytes:
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Results")
+    return buffer.getvalue()
 
 
 def render_schema(schema: dict[str, Any] | None, error: str | None) -> None:
@@ -377,8 +492,8 @@ def render_result(payload: dict[str, Any]) -> None:
     sql = html.escape(payload.get("sql", ""))
     explanation = html.escape(payload.get("explanation", ""))
     results = payload.get("results", {})
-    rows = results.get("rows", [])
-    row_count = results.get("row_count", len(rows))
+    df = result_dataframe(payload)
+    row_count = results.get("row_count", len(df))
 
     st.markdown(
         f"""
@@ -390,8 +505,47 @@ def render_result(payload: dict[str, Any]) -> None:
         unsafe_allow_html=True,
     )
     card("AI Explanation", f"<p>{explanation}</p>")
+
+    st.markdown('<div class="section-heading">Result Table</div>', unsafe_allow_html=True)
     st.markdown(f"<p class='muted'>{row_count} rows returned</p>", unsafe_allow_html=True)
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+    st.markdown('<div class="section-heading">Chart</div>', unsafe_allow_html=True)
+    chart_choice = st.selectbox("Chart selector", CHART_OPTIONS)
+    figure, chart_error = build_chart(df, chart_choice)
+    if figure is not None:
+        figure.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            margin=dict(l=20, r=20, t=35, b=20),
+        )
+        st.plotly_chart(figure, use_container_width=True)
+    elif chart_error:
+        st.info(chart_error)
+
+    st.markdown('<div class="section-heading">Export</div>', unsafe_allow_html=True)
+    if df.empty:
+        st.info("No rows available to export.")
+        return
+
+    export_left, export_right = st.columns(2)
+    with export_left:
+        st.download_button(
+            "Download CSV",
+            data=dataframe_to_csv_bytes(df),
+            file_name="sqlmind_results.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with export_right:
+        st.download_button(
+            "Download Excel",
+            data=dataframe_to_excel_bytes(df),
+            file_name="sqlmind_results.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
 
 def main() -> None:
@@ -458,6 +612,7 @@ def main() -> None:
             return
 
         if payload:
+            st.session_state.last_result = payload
             st.session_state.query_history.append(
                 {
                     "question": payload.get("question", question.strip()),
@@ -465,7 +620,9 @@ def main() -> None:
                     "row_count": payload.get("results", {}).get("row_count", 0),
                 }
             )
-            render_result(payload)
+
+    if st.session_state.last_result:
+        render_result(st.session_state.last_result)
 
 
 if __name__ == "__main__":
