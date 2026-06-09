@@ -10,6 +10,42 @@ The repository was scaffolded from an empty `PRD.md`, so V1 makes conservative a
 - NVIDIA NIM integration for SQL generation and result explanation.
 - Existing safety validation still blocks non-`SELECT` SQL before execution.
 
+## Dependencies
+
+SQLMind-Agent uses SQLMind-MCP as its database execution layer.
+
+SQLMind-MCP is responsible for:
+
+- Database connections
+- Schema discovery
+- Safe query execution
+- Multi-database support
+
+### SQLMind-MCP Repository
+
+https://github.com/ishaans04/SQLMind-MCP
+
+### Clone Both Repositories
+
+To run SQLMind-Agent locally, clone both repositories into the same parent directory.
+
+```bash
+git clone https://github.com/ishaans04/SQLMind-MCP.git
+git clone https://github.com/ishaans04/SQLMind-Agent.git
+```
+
+Expected folder structure:
+Desktop/
+├── SQLMind-MCP/
+└── SQLMind-Agent/
+
+
+### Why is SQLMind-MCP separate?
+
+SQLMind-Agent focuses on AI-powered analytics, natural-language SQL generation, visualization, and reporting.
+
+SQLMind-MCP is a reusable database execution layer that can be integrated with other AI agents and applications.
+
 ## Key Features
 
 - Natural Language → SQL
