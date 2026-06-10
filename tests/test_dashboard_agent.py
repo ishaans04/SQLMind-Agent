@@ -1,7 +1,11 @@
 import httpx
 import pytest
 
-from sqlmind_agent.dashboard_agent import DashboardAgent, fallback_dashboard_plan
+from sqlmind_agent.dashboard_agent import (
+    DASHBOARD_REPORT_SYSTEM_PROMPT,
+    DashboardAgent,
+    fallback_dashboard_plan,
+)
 from sqlmind_agent.nim_client import NIMClient
 
 
@@ -71,6 +75,17 @@ def test_generate_dashboard_plan_from_mocked_nim_response(
     assert plan.kpi_cards[0].title == "Total Sales"
     assert plan.chart_widgets[0].sql_query.startswith("SELECT")
     assert "executive dashboard designer" in requests[0]["messages"][0]["content"]
+
+
+def test_dashboard_report_prompt_requires_structured_markdown() -> None:
+    assert "# Dashboard Insight Report" in DASHBOARD_REPORT_SYSTEM_PROMPT
+    assert "## Executive Summary" in DASHBOARD_REPORT_SYSTEM_PROMPT
+    assert "## KPI Interpretation" in DASHBOARD_REPORT_SYSTEM_PROMPT
+    assert "## Chart Insights" in DASHBOARD_REPORT_SYSTEM_PROMPT
+    assert "## Business / Academic Recommendations" in DASHBOARD_REPORT_SYSTEM_PROMPT
+    assert "## Risks & Follow-ups" in DASHBOARD_REPORT_SYSTEM_PROMPT
+    assert "Return clean Markdown only" in DASHBOARD_REPORT_SYSTEM_PROMPT
+    assert "Do not include JSON" in DASHBOARD_REPORT_SYSTEM_PROMPT
 
 
 def test_generate_dashboard_plan_falls_back_when_nim_returns_invalid_json(

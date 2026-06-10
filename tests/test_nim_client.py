@@ -1,7 +1,12 @@
 import httpx
 import pytest
 
-from sqlmind_agent.nim_client import MissingNvidiaApiKeyError, NIMClient, build_sql_prompt
+from sqlmind_agent.nim_client import (
+    EXPLANATION_SYSTEM_PROMPT,
+    MissingNvidiaApiKeyError,
+    NIMClient,
+    build_sql_prompt,
+)
 
 
 def test_generate_sql_uses_mocked_nim_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,6 +138,14 @@ def test_explain_results_uses_mocked_nim_response(monkeypatch: pytest.MonkeyPatc
     )
 
     assert explanation == "Sales are highest in North."
+
+
+def test_explanation_prompt_requires_structured_markdown() -> None:
+    assert "## Explanation" in EXPLANATION_SYSTEM_PROMPT
+    assert "Return clean Markdown only" in EXPLANATION_SYSTEM_PROMPT
+    assert "Do not include code fences" in EXPLANATION_SYSTEM_PROMPT
+    assert "Do not include JSON" in EXPLANATION_SYSTEM_PROMPT
+    assert "3 to 5 bullet points maximum" in EXPLANATION_SYSTEM_PROMPT
 
 
 def test_missing_api_key_is_graceful() -> None:

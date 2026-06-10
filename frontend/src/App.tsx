@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import {
   API_BASE_URL,
@@ -82,13 +83,20 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-950">
       <div className="flex min-h-screen">
         <aside className="hidden w-72 border-r border-border bg-white/95 px-4 py-5 lg:block">
-          <div className="mb-8 flex items-center gap-3 px-2">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow-sm">
-              <Database className="h-5 w-5" />
+          <div className="mb-8 flex items-center gap-4 rounded-2xl px-3 py-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-sm">
+              <Database className="h-6 w-6" />
             </div>
-            <div>
-              <div className="font-semibold tracking-tight">SQLMind Agent</div>
-              <div className="text-xs text-slate-500">Enterprise analytics</div>
+            <div className="min-w-0 text-left">
+              <div className="truncate text-[30px] font-bold leading-none tracking-tight text-slate-950">
+                SQLMind
+              </div>
+              <div className="mt-1 text-sm font-medium leading-5 text-slate-600">
+                AI Database Intelligence
+              </div>
+              <div className="mt-1 text-[12.5px] leading-5 text-slate-400 [overflow-wrap:anywhere]">
+                SQLite • MySQL • PostgreSQL
+              </div>
             </div>
           </div>
           <nav className="space-y-1">
@@ -366,10 +374,11 @@ function ResultWorkspace({ result }: { result: AskResponse }) {
           <ChartPanel results={result.results} />
         </Tabs.Content>
         <Tabs.Content value="explanation">
-          <Card>
-            <h2 className="mb-2 text-sm font-semibold">AI explanation</h2>
-            <p className="leading-7 text-slate-600">{result.explanation}</p>
-          </Card>
+          <ReportCard
+            eyebrow="Query explanation"
+            title="AI Explanation"
+            markdown={result.explanation}
+          />
         </Tabs.Content>
         <Tabs.Content value="export">
           <Card>
@@ -465,10 +474,11 @@ function SmartAnalysisMode({
               )}
             </Card>
           ))}
-          <Card>
-            <h2 className="mb-2 text-sm font-semibold">Final insight report</h2>
-            <p className="leading-7 text-slate-600">{result.final_insight_report}</p>
-          </Card>
+          <ReportCard
+            eyebrow="Smart analysis report"
+            title="Final Insight Report"
+            markdown={result.final_insight_report}
+          />
         </div>
       )}
     </div>
@@ -594,17 +604,11 @@ function DashboardMode({
               ))}
             </div>
           </Card>
-          <Card>
-            <div className="mb-5 border-b border-border pb-4">
-              <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">
-                Executive analytics report
-              </div>
-              <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
-                AI Insights
-              </h2>
-            </div>
-            <ExecutiveMarkdownReport markdown={result.final_insight_report} />
-          </Card>
+          <ReportCard
+            eyebrow="Executive analytics report"
+            title="AI Insights"
+            markdown={result.final_insight_report}
+          />
         </div>
       )}
     </div>
@@ -891,10 +895,35 @@ function slug(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+function ReportCard({
+  eyebrow,
+  title,
+  markdown
+}: {
+  eyebrow: string;
+  title: string;
+  markdown: string;
+}) {
+  return (
+    <Card>
+      <div className="mb-5 border-b border-border pb-4">
+        <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+          {eyebrow}
+        </div>
+        <h2 className="mt-1 text-lg font-semibold tracking-tight text-slate-950">
+          {title}
+        </h2>
+      </div>
+      <ExecutiveMarkdownReport markdown={normalizeMarkdownReport(markdown)} />
+    </Card>
+  );
+}
+
 function ExecutiveMarkdownReport({ markdown }: { markdown: string }) {
   return (
     <div className="max-w-none text-sm leading-7 text-slate-700">
       <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
         components={{
           h1: ({ children }) => (
             <h1 className="mb-4 text-2xl font-semibold tracking-tight text-slate-950">
@@ -919,13 +948,114 @@ function ExecutiveMarkdownReport({ markdown }: { markdown: string }) {
           ol: ({ children }) => (
             <ol className="mb-4 ml-5 list-decimal space-y-3 text-slate-600">{children}</ol>
           ),
-          li: ({ children }) => <li className="pl-1">{children}</li>
+          li: ({ children }) => <li className="pl-1">{children}</li>,
+          table: ({ children }) => (
+            <div className="mb-5 overflow-hidden rounded-xl border border-border">
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse bg-white text-left text-sm">
+                  {children}
+                </table>
+              </div>
+            </div>
+          ),
+          thead: ({ children }) => <thead className="bg-slate-50">{children}</thead>,
+          th: ({ children }) => (
+            <th className="border-b border-border px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              {children}
+            </th>
+          ),
+          td: ({ children }) => (
+            <td className="border-b border-slate-100 px-4 py-3 align-top text-slate-600">
+              {children}
+            </td>
+          )
         }}
       >
         {markdown}
       </ReactMarkdown>
     </div>
   );
+}
+
+function normalizeMarkdownReport(markdown: string) {
+  const normalized = repairBrokenMarkdownLists(
+    markdown
+    .replace(/\\n/g, "\n")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/^\s*[-*]\s*$/gm, "")
+    .replace(/^\s*\d+\.\s*$/gm, "")
+    .replace(/^here is (the )?/gim, "")
+    .replace(/^Final Insight Report:\s*(.+)$/gim, "# Dashboard Insight Report: $1")
+    .replace(/^Final Insight Report$/gim, "# Dashboard Insight Report")
+    .replace(/^Summary:\s*$/gim, "## Executive Summary")
+    .replace(/^Summary:\s*(.+)$/gim, "## Executive Summary\n$1")
+    .replace(/^Key Findings:\s*$/gim, "## Key Findings")
+    .replace(/^Recommendations:\s*$/gim, "## Recommendations")
+    .replace(/^Attention Areas:\s*$/gim, "## Attention Areas")
+    .replace(/^Risks & Follow-ups:\s*$/gim, "## Risks & Follow-ups")
+    .replace(/(\*\*[^*\n]+:\*\*)/g, "\n$1")
+    .replace(/^\*\*([^*\n]+):\*\*\s*(.+)$/gm, "- **$1:** $2")
+    .replace(/^\*\*(Explanation)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Final Insight Report)\*\*$/gim, "# $1")
+    .replace(/^\*\*(Smart Analysis Report)\*\*$/gim, "# $1")
+    .replace(/^\*\*(Dashboard Insight Report)\*\*$/gim, "# $1")
+    .replace(/^\*\*(Executive Summary)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Key Findings)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Supporting Metrics)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Recommendations)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Attention Areas)\*\*$/gim, "## $1")
+    .replace(/^\*\*(KPI Interpretation)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Chart Insights)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Business \/ Academic Recommendations)\*\*$/gim, "## $1")
+    .replace(/^\*\*(Risks & Follow-ups)\*\*$/gim, "## $1")
+  )
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return removeDuplicateMarkdownTitles(normalized);
+}
+
+function repairBrokenMarkdownLists(markdown: string) {
+  const lines = markdown.split("\n");
+  const repaired: string[] = [];
+  let pendingNumber: string | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const numberMatch = trimmed.match(/^(\d+)\.\s*$/);
+    if (numberMatch) {
+      pendingNumber = numberMatch[1];
+      continue;
+    }
+    if (!trimmed) {
+      continue;
+    }
+    if (pendingNumber) {
+      repaired.push(`${pendingNumber}. ${trimmed}`);
+      pendingNumber = null;
+      continue;
+    }
+    repaired.push(line);
+  }
+
+  return repaired.join("\n");
+}
+
+function removeDuplicateMarkdownTitles(markdown: string) {
+  const seen = new Set<string>();
+  return markdown
+    .split("\n")
+    .filter((line) => {
+      const title = line.match(/^#{1,2}\s+(.+)$/)?.[1]?.trim().toLowerCase();
+      if (!title) return true;
+      if (seen.has(title)) return false;
+      seen.add(title);
+      return true;
+    })
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function formatKpiValue(value: unknown, title = "") {
