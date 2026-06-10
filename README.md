@@ -104,35 +104,47 @@ Then open:
 ## Tech Stack
 
 ### Frontend
-- React + Vite + TypeScript + Tailwind CSS
+
+- React
+- Vite
+- TypeScript
+- Tailwind CSS
 - Radix UI
 - Recharts
-- Streamlit fallback UI
+- Streamlit (legacy/fallback UI)
 
 ### Backend
+
 - FastAPI
+- Python
 
 ### AI Layer
+
 - NVIDIA NIM
-- Llama 3.1 8B
+- Llama 3.1 8B Instruct
 
 ### Database Layer
+
 - SQLite
 - MySQL
 - PostgreSQL
 
 ### Protocol
+
 - Model Context Protocol (MCP)
 
-### Analytics
+### Analytics & Visualization
+
 - Plotly
 - Pandas
 
-### Testing
+### Testing & Quality
+
 - Pytest
 - Ruff
 
 ### CI/CD
+
 - GitHub Actions
 
 ## Example Request
