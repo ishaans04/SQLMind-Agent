@@ -157,30 +157,6 @@ Invoke-RestMethod `
   -Body '{"question":"show total sales by region","limit":10}'
 ```
 
-## Streamlit UI
-
-Run the API and UI in two terminals:
-
-```powershell
-python -m uvicorn sqlmind_agent.api:app --reload --port 8001
-```
-
-```powershell
-streamlit run streamlit_app.py
-```
-
-The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows an enterprise-style analytics dashboard with backend, MCP, database, and NIM status pills; database schema; query history; conversation memory; generated SQL; AI explanation; result rows; visual analytics; executive dashboard generation; and exports.
-
-The sidebar includes a database connection panel:
-
-- SQLite: enter a `.db` path or upload a `.db`/`.sqlite` file.
-- PostgreSQL: host, port `5432`, database name, username, and password.
-- MySQL: host, port `3306`, database name, username, and password.
-
-Passwords are sent only to the backend connection endpoint and are never displayed in responses or query history. Uploaded SQLite files are staged under `data/uploads/`, which is ignored by git.
-
-For screenshots or demos, start both terminals above, open the Streamlit URL printed in the terminal, connect the demo SQLite database, and run an example question such as `Show attendance by student`.
-
 ## React Frontend
 
 SQLMind-Agent also includes a production-grade React frontend under `frontend/`. The Streamlit app remains available as a fallback.
@@ -213,6 +189,18 @@ The React UI provides:
 - Generated SQL, result tables, charts, explanations, and CSV/Excel exports
 - Smart Analysis plan cards, executed SQL sections, charts, and final insight report
 - Dashboard Mode with KPI cards, chart grid, tables, generated SQL, and AI insights
+
+## Streamlit UI (Legacy / Fallback)
+
+The original Streamlit interface remains available for development, testing, and demos.
+
+Run:
+
+```powershell
+python -m uvicorn sqlmind_agent.api:app --reload --port 8001
+streamlit run streamlit_app.py
+```
+> The React frontend is the recommended production interface. Streamlit is a legacy fallback that can be useful for quick demos, testing, and development.
 
 ### Conversational Memory
 
