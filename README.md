@@ -49,16 +49,40 @@ SQLMind-MCP is a reusable database execution layer that can be integrated with o
 
 ## Key Features
 
-- Natural Language → SQL
-- Multi-Database Support (SQLite, MySQL, PostgreSQL)
-- MCP Integration
-- NVIDIA NIM Integration
+### AI & Analytics
+
+- Natural Language → SQL Generation
 - Smart Analytics Agent
+- AI-Generated Executive Insights
 - Conversational Memory
-- Interactive Charts
-- CSV & Excel Export
-- Enterprise Streamlit Dashboard
+- NVIDIA NIM Integration
+
+### Data Connectivity
+
+- Multi-Database Support (SQLite, MySQL, PostgreSQL)
+- SQLMind-MCP Integration
+- Schema Discovery & Exploration
+
+### Dashboards & Visualization
+
+- Dashboard Generator
+- Executive KPI Dashboards
+- Interactive Charts & Visual Analytics
+- Branch-wise & Performance Analytics
+
+### Export & Reporting
+
+- CSV Export
+- Excel Export
+- Executive Dashboard Reports
+
+### Platform & Security
+
+- React + Vite Enterprise Frontend
+- FastAPI Backend Services
 - Read-Only Security Layer
+- Automated SQL Safety Validation
+- GitHub Actions CI/CD
 
 ## Quick Start
 
@@ -80,7 +104,10 @@ Then open:
 ## Tech Stack
 
 ### Frontend
-- Streamlit
+- React + Vite + TypeScript + Tailwind CSS
+- Radix UI
+- Recharts
+- Streamlit fallback UI
 
 ### Backend
 - FastAPI
@@ -130,7 +157,7 @@ python -m uvicorn sqlmind_agent.api:app --reload --port 8001
 streamlit run streamlit_app.py
 ```
 
-The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows an enterprise-style analytics dashboard with backend, MCP, database, and NIM status pills; database schema; query history; conversation memory; generated SQL; AI explanation; result rows; visual analytics; and exports.
+The Streamlit app reads `FASTAPI_BASE_URL` from `.env`, defaulting to `http://127.0.0.1:8001`. It shows an enterprise-style analytics dashboard with backend, MCP, database, and NIM status pills; database schema; query history; conversation memory; generated SQL; AI explanation; result rows; visual analytics; executive dashboard generation; and exports.
 
 The sidebar includes a database connection panel:
 
@@ -141,6 +168,39 @@ The sidebar includes a database connection panel:
 Passwords are sent only to the backend connection endpoint and are never displayed in responses or query history. Uploaded SQLite files are staged under `data/uploads/`, which is ignored by git.
 
 For screenshots or demos, start both terminals above, open the Streamlit URL printed in the terminal, connect the demo SQLite database, and run an example question such as `Show attendance by student`.
+
+## React Frontend
+
+SQLMind-Agent also includes a production-grade React frontend under `frontend/`. The Streamlit app remains available as a fallback.
+
+Run the FastAPI backend first:
+
+```powershell
+python -m uvicorn sqlmind_agent.api:app --reload --port 8001
+```
+
+Then start the React app:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+The React frontend reads `VITE_API_BASE_URL` from `frontend/.env`, defaulting from `frontend/.env.example` to:
+
+```text
+VITE_API_BASE_URL=http://127.0.0.1:8001
+```
+
+The React UI provides:
+
+- Sidebar navigation for Ask, Smart Analysis, Dashboard, Connections, and History
+- Multi-database connection panel for SQLite, PostgreSQL, and MySQL
+- Backend, MCP, database, and NVIDIA NIM status bar
+- Generated SQL, result tables, charts, explanations, and CSV/Excel exports
+- Smart Analysis plan cards, executed SQL sections, charts, and final insight report
+- Dashboard Mode with KPI cards, chart grid, tables, generated SQL, and AI insights
 
 ### Conversational Memory
 
@@ -167,6 +227,27 @@ Use the mode selector to switch from `Ask Mode` to `Smart Analysis Mode`. Smart 
 - Final insight report
 
 If one step fails, SQLMind reports that step and continues running the remaining analysis steps.
+
+### Dashboard Mode
+
+Use the mode selector to switch to `Dashboard Mode`. Dashboard Mode accepts broad executive dashboard requests, asks NVIDIA NIM for a dashboard plan, validates every widget query with the existing read-only safety layer, executes safe queries through SQLMind-MCP, and renders:
+
+- Dashboard title
+- KPI cards
+- Chart widgets
+- Table widgets
+- Generated SQL expandable sections
+- Final AI insight report
+- CSV and Excel exports for widget result tables
+
+Example dashboard prompts:
+
+- `Generate a student performance dashboard`
+- `Create a sales dashboard`
+- `Build an attendance analytics dashboard`
+- `Create a fees summary dashboard`
+
+If one widget query fails, SQLMind shows the failed widget and continues rendering the remaining dashboard widgets. If a chart cannot be generated from a widget result, the UI falls back to a table.
 
 ### Visual Analytics
 
@@ -208,6 +289,17 @@ Use `Download Excel` in the export section to save the current query results as 
   "explanation": "..."
 }
 ```
+
+`POST /dashboard` accepts:
+
+```json
+{
+  "prompt": "Create a sales dashboard",
+  "limit": 10
+}
+```
+
+It returns the dashboard title, KPI widgets, chart widgets, table widgets, generated SQL, and a final insight report.
 
 ## Configuration
 

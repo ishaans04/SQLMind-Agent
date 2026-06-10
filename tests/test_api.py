@@ -4,6 +4,7 @@ from sqlmind_agent.api import (
     app,
     get_analysis_planner,
     get_connection_mcp_client,
+    get_dashboard_agent,
     get_mcp_client,
     get_nim_client,
 )
@@ -15,6 +16,8 @@ from sqlmind_agent.schemas import (
     AnalysisPlanStep,
     ColumnInfo,
     ConnectDatabaseRequest,
+    DashboardPlan,
+    DashboardWidgetResult,
     ExecutedAnalysisStep,
     QueryResults,
     SchemaResponse,
@@ -62,6 +65,12 @@ class MockMCPClient:
         self.last_sql = sql
         if "bad_table" in sql:
             raise MCPClientError("Requested table does not exist.")
+        if "SUM(amount) AS total_sales FROM sales" in sql and "GROUP BY" not in sql:
+            return QueryResults(
+                columns=["total_sales"],
+                rows=[{"total_sales": 32.5}],
+                row_count=1,
+            )
         return self.results
 
 
@@ -163,6 +172,59 @@ class MockAnalysisPlanner:
         if failures:
             return "Analysis completed with one failed step."
         return "Regional and product sales were analyzed successfully."
+
+
+class MockDashboardAgent:
+    def generate_plan(self, prompt: str, schema: dict) -> DashboardPlan:
+        assert prompt
+        assert schema["tables"][0]["name"] == "sales"
+        return DashboardPlan(
+            dashboard_title="Sales Executive Dashboard",
+            kpi_cards=[
+                {
+                    "title": "Total Sales",
+                    "purpose": "Track total sales.",
+                    "sql_query": "SELECT SUM(amount) AS total_sales FROM sales",
+                }
+            ],
+            chart_widgets=[
+                {
+                    "title": "Sales by Region",
+                    "purpose": "Compare regional performance.",
+                    "sql_query": (
+                        "SELECT region, SUM(amount) AS total_sales "
+                        "FROM sales GROUP BY region"
+                    ),
+                },
+                {
+                    "title": "Broken Chart",
+                    "purpose": "Exercise graceful failure.",
+                    "sql_query": "SELECT * FROM bad_table",
+                },
+            ],
+            table_widgets=[
+                {
+                    "title": "Sales Detail",
+                    "purpose": "Preview sales data.",
+                    "sql_query": "SELECT * FROM sales",
+                }
+            ],
+            insight_goals=["Find regional sales patterns."],
+        )
+
+    def final_report(
+        self,
+        prompt: str,
+        plan: DashboardPlan,
+        kpis: list[DashboardWidgetResult],
+        charts: list[DashboardWidgetResult],
+        tables: list[DashboardWidgetResult],
+    ) -> str:
+        assert plan.dashboard_title == "Sales Executive Dashboard"
+        assert kpis
+        assert charts
+        assert tables
+        return "Sales dashboard generated with one failed widget."
 
 
 def clear_overrides() -> None:
@@ -384,6 +446,49 @@ def test_analyze_continues_when_one_step_fails() -> None:
     assert "bad_table" in payload["executed_steps"][1]["sql_query"]
     assert payload["executed_steps"][2]["success"] is True
     assert payload["final_insight_report"] == "Analysis completed with one failed step."
+
+
+def test_dashboard_executes_widgets_and_continues_when_one_fails() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=10)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_dashboard_agent] = lambda: MockDashboardAgent()
+
+    client = TestClient(app)
+    response = client.post(
+        "/dashboard",
+        json={"prompt": "Create a sales dashboard", "limit": 10},
+    )
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["dashboard_title"] == "Sales Executive Dashboard"
+    assert payload["kpis"][0]["success"] is True
+    assert payload["kpis"][0]["value"] == 32.5
+    assert payload["charts"][0]["success"] is True
+    assert payload["charts"][1]["success"] is False
+    assert "bad_table" in payload["charts"][1]["sql_query"]
+    assert payload["tables"][0]["success"] is True
+    assert len(payload["generated_sql"]) == 4
+    assert payload["final_insight_report"] == "Sales dashboard generated with one failed widget."
+
+
+def test_dashboard_blocks_mutation_prompt_before_planning() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=10)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_dashboard_agent] = lambda: MockDashboardAgent()
+
+    client = TestClient(app)
+    response = client.post(
+        "/dashboard",
+        json={"prompt": "Create a dashboard and drop the sales table"},
+    )
+
+    clear_overrides()
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == READ_ONLY_MODE_MESSAGE
 
 
 def test_schema_returns_graceful_error_when_mcp_fails() -> None:

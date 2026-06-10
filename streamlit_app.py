@@ -18,6 +18,8 @@ REQUEST_TIMEOUT_SECONDS = 12
 UPLOAD_DIR = Path("data/uploads")
 READ_ONLY_MODE_MESSAGE = "Command not allowed. SQLMind Agent is running in read-only mode."
 CHART_OPTIONS = ["Auto", "Bar Chart", "Line Chart", "Pie Chart", "No Chart"]
+DISTRIBUTION_CATEGORY_HINTS = ("bucket", "range", "bin", "label", "category")
+COUNT_COLUMN_HINTS = ("count", "frequency", "records", "students", "rows")
 
 
 def load_dotenv(path: Path = Path(".env")) -> None:
@@ -95,6 +97,22 @@ def analyze_backend(question: str, limit: int) -> tuple[dict[str, Any] | None, s
     return response.json(), None
 
 
+def dashboard_backend(prompt: str, limit: int) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        response = requests.post(
+            api_url("/dashboard"),
+            json={"prompt": prompt, "limit": limit},
+            timeout=REQUEST_TIMEOUT_SECONDS * 3,
+        )
+        response.raise_for_status()
+    except requests.HTTPError as error:
+        detail = _error_detail(error.response)
+        return None, detail or str(error)
+    except requests.RequestException as error:
+        return None, str(error)
+    return response.json(), None
+
+
 def connect_database_backend(config: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
     safe_config = {key: value for key, value in config.items() if value not in (None, "")}
     try:
@@ -132,6 +150,8 @@ def ensure_session_state() -> None:
         st.session_state.last_result = None
     if "last_analysis" not in st.session_state:
         st.session_state.last_analysis = None
+    if "last_dashboard" not in st.session_state:
+        st.session_state.last_dashboard = None
     if "conversation_memory" not in st.session_state:
         st.session_state.conversation_memory = []
 
@@ -539,8 +559,12 @@ def infer_auto_chart(df: pd.DataFrame) -> str:
 
     category_columns = category_column_names(df)
     if not category_columns:
+        if len(numeric_columns) == 1:
+            return "Bar Chart"
         return "No Chart"
 
+    if is_distribution_shape(df, category_columns, numeric_columns):
+        return "Bar Chart"
     if df[category_columns[0]].nunique(dropna=True) <= 6:
         return "Pie Chart"
     return "Bar Chart"
@@ -556,6 +580,24 @@ def category_column_names(df: pd.DataFrame) -> list[str]:
         for column in df.columns
         if column not in numeric_column_names(df) and column not in date_column_names(df)
     ]
+
+
+def is_distribution_shape(
+    df: pd.DataFrame,
+    category_columns: list[str],
+    numeric_columns: list[str],
+) -> bool:
+    if not category_columns or not numeric_columns:
+        return False
+    category_name = str(category_columns[0]).lower()
+    numeric_name = str(numeric_columns[0]).lower()
+    category_has_distribution_hint = any(
+        hint in category_name for hint in DISTRIBUTION_CATEGORY_HINTS
+    )
+    numeric_is_count = any(hint in numeric_name for hint in COUNT_COLUMN_HINTS)
+    if category_has_distribution_hint or numeric_is_count:
+        return True
+    return df[category_columns[0]].nunique(dropna=True) > 6
 
 
 def date_column_names(df: pd.DataFrame) -> list[str]:
@@ -599,6 +641,12 @@ def build_chart(df: pd.DataFrame, chart_choice: str) -> tuple[Any | None, str | 
             return px.line(chart_df, x=x_column, y=value_column, markers=True), None
 
         category_columns = category_column_names(df)
+        if chart_type == "Bar Chart" and not category_columns and len(numeric_columns) == 1:
+            distribution_df = numeric_distribution_dataframe(df, numeric_columns[0])
+            if distribution_df.empty:
+                return None, "Numeric distribution could not be generated."
+            return px.bar(distribution_df, x="value_range", y="record_count"), None
+
         if not category_columns:
             return None, "Chart needs a category column."
         category_column = category_columns[0]
@@ -613,6 +661,22 @@ def build_chart(df: pd.DataFrame, chart_choice: str) -> tuple[Any | None, str | 
         return px.bar(grouped, x=category_column, y=value_column), None
     except Exception as error:
         return None, f"Chart cannot be generated: {error}"
+
+
+def numeric_distribution_dataframe(df: pd.DataFrame, column: str, bins: int = 8) -> pd.DataFrame:
+    values = pd.to_numeric(df[column], errors="coerce").dropna()
+    if values.empty:
+        return pd.DataFrame(columns=["value_range", "record_count"])
+    if values.nunique(dropna=True) == 1:
+        label = str(values.iloc[0])
+        return pd.DataFrame([{"value_range": label, "record_count": int(len(values))}])
+    bucket_count = min(bins, max(2, int(values.nunique(dropna=True))))
+    buckets = pd.cut(values, bins=bucket_count, include_lowest=True, duplicates="drop")
+    distribution = buckets.value_counts(sort=False).reset_index()
+    distribution.columns = ["value_range", "record_count"]
+    distribution["value_range"] = distribution["value_range"].astype(str)
+    distribution["record_count"] = distribution["record_count"].astype(int)
+    return distribution
 
 
 def dataframe_to_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -973,6 +1037,137 @@ def render_analysis(payload: dict[str, Any]) -> None:
         )
 
 
+def render_dashboard(payload: dict[str, Any]) -> None:
+    dashboard_title = html.escape(payload.get("dashboard_title", ""))
+    dashboard_prompt = html.escape(payload.get("prompt", ""))
+    st.markdown(
+        f"""
+        <div class="card final-report">
+            <div class="card-title">Dashboard</div>
+            <h2 style="margin:.1rem 0 .25rem;">{dashboard_title}</h2>
+            <p class="muted">{dashboard_prompt}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    kpis = payload.get("kpis", [])
+    if kpis:
+        st.markdown('<div class="section-heading">KPI Cards</div>', unsafe_allow_html=True)
+        columns = st.columns(min(len(kpis), 4))
+        for index, widget in enumerate(kpis):
+            with columns[index % len(columns)]:
+                if widget.get("success"):
+                    value = widget.get("value")
+                    st.metric(widget.get("title", "KPI"), value if value is not None else "-")
+                else:
+                    error_card(
+                        widget.get("title", "KPI failed"),
+                        widget.get("error", "This KPI could not be generated."),
+                    )
+    else:
+        empty_card("No KPI cards", "The dashboard plan did not include KPI widgets.")
+
+    charts = payload.get("charts", [])
+    st.markdown('<div class="section-heading">Charts</div>', unsafe_allow_html=True)
+    if not charts:
+        empty_card("No chart widgets", "The dashboard plan did not include chart widgets.")
+    for widget in charts:
+        _render_dashboard_result_widget(widget, prefer_chart=True)
+
+    tables = payload.get("tables", [])
+    st.markdown('<div class="section-heading">Tables</div>', unsafe_allow_html=True)
+    if not tables:
+        empty_card("No table widgets", "The dashboard plan did not include table widgets.")
+    for widget in tables:
+        _render_dashboard_result_widget(widget, prefer_chart=False)
+
+    with st.expander("Generated SQL", expanded=False):
+        generated_sql = payload.get("generated_sql", [])
+        if not generated_sql:
+            st.caption("No generated SQL was returned.")
+        for item in generated_sql:
+            status = "Success" if item.get("success") else "Failed"
+            st.markdown(
+                f"**{html.escape(item.get('widget_type', '').title())}: "
+                f"{html.escape(item.get('title', ''))}** - {status}"
+            )
+            st.code(item.get("sql_query", ""), language="sql")
+            if item.get("error"):
+                error_card("Widget query failed", item.get("error"))
+
+    card(
+        "Final AI Insight Report",
+        f"<p>{html.escape(payload.get('final_insight_report', ''))}</p>",
+    )
+
+
+def _render_dashboard_result_widget(widget: dict[str, Any], prefer_chart: bool) -> None:
+    title = widget.get("title", "Dashboard widget")
+    purpose = widget.get("purpose", "")
+    if not widget.get("success"):
+        error_card(title, widget.get("error", "This widget could not be generated."))
+        return
+
+    df = result_dataframe({"results": widget.get("results", {})})
+    st.markdown(
+        f"""
+        <div class="card">
+            <div class="card-title">{html.escape(title)}</div>
+            <div class="muted">{html.escape(purpose)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if df.empty:
+        empty_card("No rows returned", "This widget completed successfully but returned no rows.")
+        return
+
+    if prefer_chart:
+        figure, chart_error = build_chart(df, "Auto")
+        if figure is not None:
+            figure.update_layout(
+                template="plotly_dark",
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(l=20, r=20, t=35, b=20),
+            )
+            st.plotly_chart(figure, use_container_width=True)
+        else:
+            empty_card(
+                "No chart available",
+                chart_error or "This result is better displayed as a table.",
+            )
+            st.dataframe(df, use_container_width=True, hide_index=True)
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    export_left, export_right = st.columns(2)
+    file_slug = _download_file_slug(title)
+    with export_left:
+        st.download_button(
+            f"Download {title} CSV",
+            data=dataframe_to_csv_bytes(df),
+            file_name=f"{file_slug}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    with export_right:
+        st.download_button(
+            f"Download {title} Excel",
+            data=dataframe_to_excel_bytes(df),
+            file_name=f"{file_slug}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+
+def _download_file_slug(title: str) -> str:
+    slug = "".join(character.lower() if character.isalnum() else "_" for character in title)
+    return "_".join(part for part in slug.split("_") if part) or "sqlmind_dashboard_widget"
+
+
 def main() -> None:
     load_dotenv()
     print(f"SQLMind-Agent Streamlit Python executable: {sys.executable}")
@@ -1025,7 +1220,7 @@ def main() -> None:
 
     mode = st.radio(
         "Mode",
-        ["Ask Mode", "Smart Analysis Mode"],
+        ["Ask Mode", "Smart Analysis Mode", "Dashboard Mode"],
         horizontal=True,
     )
 
@@ -1037,12 +1232,20 @@ def main() -> None:
                 "Example: Show average marks by course for second-year students"
                 if mode == "Ask Mode"
                 else "Example: Analyze student performance"
+                if mode == "Smart Analysis Mode"
+                else "Example: Generate a student performance dashboard"
             ),
             height=118,
         )
     with control_right:
         limit = st.number_input("Limit", min_value=1, max_value=500, value=50, step=10)
-        action_label = "Ask" if mode == "Ask Mode" else "Run Smart Analysis"
+        action_label = (
+            "Ask"
+            if mode == "Ask Mode"
+            else "Run Smart Analysis"
+            if mode == "Smart Analysis Mode"
+            else "Generate Dashboard"
+        )
         ask_clicked = st.button(action_label, use_container_width=True, disabled=not connected)
 
     if ask_clicked and mode == "Ask Mode":
@@ -1070,6 +1273,7 @@ def main() -> None:
         if payload:
             st.session_state.last_result = payload
             st.session_state.last_analysis = None
+            st.session_state.last_dashboard = None
             append_conversation_memory(payload)
             st.session_state.query_history.append(
                 {
@@ -1100,18 +1304,44 @@ def main() -> None:
         if payload:
             st.session_state.last_analysis = payload
             st.session_state.last_result = None
+            st.session_state.last_dashboard = None
+
+    if ask_clicked and mode == "Dashboard Mode":
+        if not question.strip():
+            empty_card(
+                "Dashboard request required",
+                "Enter a broad dashboard request such as Create a sales dashboard.",
+            )
+            return
+
+        with st.spinner("Generating executive dashboard..."):
+            payload, error = dashboard_backend(question.strip(), int(limit))
+
+        if error:
+            if error == READ_ONLY_MODE_MESSAGE:
+                error_card(READ_ONLY_MODE_MESSAGE)
+            else:
+                error_card("Dashboard generation failed", error)
+            return
+
+        if payload:
+            st.session_state.last_dashboard = payload
+            st.session_state.last_result = None
+            st.session_state.last_analysis = None
 
     if st.session_state.last_result:
         render_result(st.session_state.last_result)
     elif st.session_state.last_analysis:
         render_analysis(st.session_state.last_analysis)
+    elif st.session_state.last_dashboard:
+        render_dashboard(st.session_state.last_dashboard)
     else:
         if connected:
             empty_card(
                 "No query yet",
                 (
-                    "Use Ask Mode for a focused question or Smart Analysis Mode for "
-                    "a multi-step report."
+                    "Use Ask Mode for a focused question, Smart Analysis Mode for "
+                    "a multi-step report, or Dashboard Mode for an executive view."
                 ),
             )
         else:

@@ -96,6 +96,53 @@ class AnalysisResponse(BaseModel):
     final_insight_report: str
 
 
+class DashboardRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=500)
+    limit: int | None = Field(default=None, ge=1, le=500)
+
+
+class DashboardWidgetPlan(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    purpose: str = Field(default="", max_length=1_000)
+    sql_query: str = Field(min_length=1, max_length=5_000)
+
+
+class DashboardPlan(BaseModel):
+    dashboard_title: str = Field(min_length=1, max_length=200)
+    kpi_cards: list[DashboardWidgetPlan] = Field(default_factory=list, max_length=8)
+    chart_widgets: list[DashboardWidgetPlan] = Field(default_factory=list, max_length=8)
+    table_widgets: list[DashboardWidgetPlan] = Field(default_factory=list, max_length=8)
+    insight_goals: list[str] = Field(default_factory=list, max_length=8)
+
+
+class DashboardWidgetResult(BaseModel):
+    title: str
+    purpose: str = ""
+    sql_query: str
+    success: bool
+    results: QueryResults | None = None
+    value: Any | None = None
+    error: str | None = None
+
+
+class DashboardGeneratedSQL(BaseModel):
+    widget_type: Literal["kpi", "chart", "table"]
+    title: str
+    sql_query: str
+    success: bool
+    error: str | None = None
+
+
+class DashboardResponse(BaseModel):
+    prompt: str
+    dashboard_title: str
+    kpis: list[DashboardWidgetResult]
+    charts: list[DashboardWidgetResult]
+    tables: list[DashboardWidgetResult]
+    generated_sql: list[DashboardGeneratedSQL]
+    final_insight_report: str
+
+
 class QueryResponse(BaseModel):
     sql: str
     columns: list[str]
