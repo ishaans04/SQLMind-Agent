@@ -327,22 +327,39 @@ If SQLMind-MCP cannot start or respond, the API returns a graceful `503` error. 
 ## Project Layout
 
 ```text
-sqlmind_agent/
-  api.py              FastAPI routes
-  config.py           Runtime settings
-  database.py         SQLite schema inspection and execution
-  mcp_client.py       SQLMind-MCP stdio client
-  nim_client.py       NVIDIA NIM chat-completions client
-  planner.py          Natural-language to SQL starter planner
-  safety.py           Read-only SQL validation
-  schemas.py          API models
-scripts/
-  init_demo_db.py     Creates data/demo.db
-streamlit_app.py      Streamlit dashboard UI
-tests/
-  test_*.py           Unit and API tests
-```
+SQLMind-Agent/
 
+├── frontend/                 React + Vite production frontend
+│   ├── src/                  React components, pages, API client
+│   ├── package.json          Frontend dependencies
+│   └── .env.example          Frontend API base URL
+│
+├── sqlmind_agent/            FastAPI backend package
+│   ├── api.py                FastAPI routes and API entrypoint
+│   ├── config.py             Runtime settings and environment config
+│   ├── dashboard_agent.py    AI dashboard planning and widget generation
+│   ├── database.py           Database helpers and demo SQLite utilities
+│   ├── mcp_client.py         SQLMind-MCP stdio client
+│   ├── nim_client.py         NVIDIA NIM chat-completions client
+│   ├── planner.py            Natural-language to SQL planning
+│   ├── safety.py             Read-only SQL validation
+│   └── schemas.py            API request/response models
+│
+├── scripts/
+│   └── init_demo_db.py       Creates data/demo.db
+│
+├── tests/                    Unit and API tests
+│   └── test_*.py
+│
+├── docs/                     Architecture diagrams and screenshots
+│
+├── .github/workflows/        GitHub Actions CI workflows
+│
+├── streamlit_app.py          Legacy/fallback Streamlit UI
+├── pyproject.toml            Backend dependencies and tooling
+├── README.md                 Project documentation
+└── .env.example              Backend environment template
+```
 
 ## Example Workflow
 
