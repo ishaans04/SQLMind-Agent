@@ -143,7 +143,7 @@ Then open:
 - Pytest
 - Ruff
 
-### CI/CD
+### CI
 
 - GitHub Actions
 
@@ -386,7 +386,7 @@ Charts generated
 AI explanation generated
 
 
-## V1 Scope
+## Current Capabilities
 
 V1 is intentionally small but usable:
 
@@ -399,6 +399,11 @@ V1 is intentionally small but usable:
 
 ## Next Milestones
 
-- Add support for PostgreSQL and SQL Server through SQLAlchemy connection URLs.
-- Add per-table permissions, row limits, audit logging, and saved query history.
-- Add a web UI for schema browsing and conversational query refinement.
+- User Authentication
+- Saved Dashboards
+- PDF Report Export
+- Dashboard Templates
+- Scheduled Reports
+- Cloud Deployment
+- Team Workspaces
+- Role-Based Access Control
