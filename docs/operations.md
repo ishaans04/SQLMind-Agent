@@ -6,7 +6,7 @@ SQLMind-Agent reads configuration from `.env`.
 
 Common variables:
 
-- `FASTAPI_BASE_URL`: Streamlit backend URL. Defaults to `http://127.0.0.1:8090`.
+- `FASTAPI_BASE_URL`: Backend API URL. Defaults to `http://127.0.0.1:8090`.
 - `DATABASE_URL`: default demo database connection string.
 - `NVIDIA_API_KEY`: NVIDIA NIM API key.
 - `NVIDIA_BASE_URL`: NVIDIA NIM-compatible API base URL.
@@ -48,7 +48,8 @@ npm run dev
 
 The frontend displays a connection error when it cannot reach the backend.
 
-Verify:
+Verify that:
+
 `http://127.0.0.1:8090/health`
 
 returns a healthy response.
@@ -83,7 +84,9 @@ Confirm:
 
 Natural Language → SQL, Smart Analysis, Dashboard Generation, and AI explanations require:
 
+```env
 NVIDIA_API_KEY=<your_api_key>
+```
 
 Schema inspection and direct database operations may still function without model calls.
 
@@ -109,9 +112,10 @@ Blocked:
 - DROP
 - ALTER
 - TRUNCATE
+- Multiple SQL statements
 - Unsafe database commands
 
-Queries that violate these rules are rejected before execution by the Safety Layer
+Queries that violate these rules are rejected before execution by the Safety Layer.
 
 ## Operational Notes 
 
@@ -119,4 +123,4 @@ Queries that violate these rules are rejected before execution by the Safety Lay
 - Database schema inspection is performed through SQLMind-MCP.
 - SQL generation and explanations are handled through NVIDIA NIM.
 - CSV and Excel exports are generated locally.
-- Secrets, API keys, uploaded SQLite files, and local databases should not be committed to version control.
+- Secrets, API keys, uploaded SQLite files, and local databases should not be committed to version control
