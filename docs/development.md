@@ -73,6 +73,7 @@ Current Status:
 
 ```text
 85 tests passed
+```
 
 ## Run the Optional Streamlit UI
 
