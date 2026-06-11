@@ -141,7 +141,12 @@ class MockAnalysisPlanner:
     def __init__(self, include_failed_step: bool = False):
         self.include_failed_step = include_failed_step
 
-    def generate_plan(self, question: str, schema: dict) -> list[AnalysisPlanStep]:
+    def generate_plan(
+        self,
+        question: str,
+        schema: dict,
+        db_type: str = "sqlite",
+    ) -> list[AnalysisPlanStep]:
         steps = [
             AnalysisPlanStep(
                 step_title="Sales by region",
@@ -172,6 +177,53 @@ class MockAnalysisPlanner:
         if failures:
             return "Analysis completed with one failed step."
         return "Regional and product sales were analyzed successfully."
+
+
+class OrdersAnalysisPlanner:
+    def __init__(self, sql_query: str):
+        self.sql_query = sql_query
+
+    def generate_plan(
+        self,
+        question: str,
+        schema: dict,
+        db_type: str = "sqlite",
+    ) -> list[AnalysisPlanStep]:
+        return [
+            AnalysisPlanStep(
+                step_title="Orders step",
+                purpose="Exercise Smart Analysis SQL execution.",
+                sql_query=self.sql_query,
+            ),
+            AnalysisPlanStep(
+                step_title="Sales by region",
+                purpose="Compare regional sales.",
+                sql_query="SELECT region, SUM(amount) AS total_sales FROM sales GROUP BY region",
+            ),
+            AnalysisPlanStep(
+                step_title="Total sales",
+                purpose="Compute total sales.",
+                sql_query="SELECT SUM(amount) AS total_sales FROM sales",
+            ),
+        ]
+
+    def final_report(self, question: str, executed_steps: list[ExecutedAnalysisStep]) -> str:
+        return "Smart analysis regression completed."
+
+
+class CapturingDbTypeAnalysisPlanner(MockAnalysisPlanner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.db_type: str | None = None
+
+    def generate_plan(
+        self,
+        question: str,
+        schema: dict,
+        db_type: str = "sqlite",
+    ) -> list[AnalysisPlanStep]:
+        self.db_type = db_type
+        return super().generate_plan(question, schema, db_type)
 
 
 class MockDashboardAgent:
@@ -446,6 +498,72 @@ def test_analyze_continues_when_one_step_fails() -> None:
     assert "bad_table" in payload["executed_steps"][1]["sql_query"]
     assert payload["executed_steps"][2]["success"] is True
     assert payload["final_insight_report"] == "Analysis completed with one failed step."
+
+
+def test_analyze_executes_quoted_identifier_count_query() -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=10)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_analysis_planner] = lambda: OrdersAnalysisPlanner(
+        'SELECT COUNT(*) AS total_records FROM "orders"'
+    )
+
+    client = TestClient(app)
+    response = client.post("/analyze", json={"question": "Analyze orders", "limit": 10})
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    payload = response.json()
+    first_step = payload["executed_steps"][0]
+    assert first_step["success"] is True
+    assert first_step["sql_query"] == 'SELECT COUNT(*) AS total_records FROM "orders" LIMIT 10;'
+    assert first_step["results"]["row_count"] == 2
+
+
+def test_analyze_executes_join_query() -> None:
+    join_sql = """
+    SELECT c.region, SUM(o.total_amount) AS total_sales
+    FROM orders o
+    JOIN customers c ON o.customer_id = c.customer_id
+    GROUP BY c.region
+    """
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=10)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_analysis_planner] = lambda: OrdersAnalysisPlanner(join_sql)
+
+    client = TestClient(app)
+    response = client.post("/analyze", json={"question": "Analyze sales by region", "limit": 10})
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    payload = response.json()
+    first_step = payload["executed_steps"][0]
+    assert first_step["success"] is True
+    assert "JOIN customers c ON o.customer_id = c.customer_id" in first_step["sql_query"]
+    assert first_step["sql_query"].endswith("LIMIT 10;")
+
+
+def test_analyze_passes_active_mysql_db_type_to_planner() -> None:
+    planner = CapturingDbTypeAnalysisPlanner()
+    app.state.database_config = ConnectDatabaseRequest(
+        db_type="mysql",
+        host="localhost",
+        port=3306,
+        database_name="school",
+        username="root",
+    )
+    app.dependency_overrides[get_settings] = lambda: Settings(default_limit=10)
+    app.dependency_overrides[get_mcp_client] = lambda: MockMCPClient()
+    app.dependency_overrides[get_analysis_planner] = lambda: planner
+
+    client = TestClient(app)
+    response = client.post("/analyze", json={"question": "Analyze sales", "limit": 10})
+
+    clear_overrides()
+
+    assert response.status_code == 200
+    assert planner.db_type == "mysql"
 
 
 def test_dashboard_executes_widgets_and_continues_when_one_fails() -> None:

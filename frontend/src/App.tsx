@@ -175,6 +175,7 @@ export default function App() {
                 <SmartAnalysisMode
                   disabled={!backendStatus.ok}
                   result={analysisResult}
+                  onStart={() => setAnalysisResult(null)}
                   onResult={(result, prompt) => {
                     setAnalysisResult(result);
                     setAskResult(null);
@@ -394,10 +395,12 @@ function ResultWorkspace({ result }: { result: AskResponse }) {
 function SmartAnalysisMode({
   disabled,
   result,
+  onStart,
   onResult
 }: {
   disabled: boolean;
   result: AnalysisResponse | null;
+  onStart: () => void;
   onResult: (result: AnalysisResponse, prompt: string) => void;
 }) {
   const [prompt, setPrompt] = useState("");
@@ -408,6 +411,7 @@ function SmartAnalysisMode({
   async function submit() {
     setLoading(true);
     setError(null);
+    onStart();
     const response = await analyze(prompt, limit);
     setLoading(false);
     if (response.error || !response.data) {
@@ -433,10 +437,34 @@ function SmartAnalysisMode({
         onSubmit={submit}
       />
       {error && <ErrorBanner message={error} />}
-      {!result ? (
-        <EmptyState title="No analysis yet" message="Submit a broad request to generate an analysis plan." />
+      {loading ? (
+        <EmptyState
+          title="Running multi-query analysis"
+          message="SQLMind is planning and executing every safe analysis step for this prompt."
+        />
+      ) : !result ? (
+        <EmptyState
+          title="No analysis yet"
+          message="Submit a broad request to generate an analysis plan."
+        />
       ) : (
         <div className="space-y-5">
+          <Card>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight">
+                  Multi-query analysis output
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {result.executed_steps.length} planned SQL steps were executed or reported
+                  individually for this prompt.
+                </p>
+              </div>
+              <Badge tone="success">
+                {result.executed_steps.filter((step) => step.success).length} successful
+              </Badge>
+            </div>
+          </Card>
           <div className="grid gap-4 lg:grid-cols-3">
             {result.analysis_plan.map((step, index) => (
               <Card key={step.step_title}>
@@ -451,7 +479,12 @@ function SmartAnalysisMode({
           {result.executed_steps.map((step, index) => (
             <Card key={`${step.step_title}-${index}`} className="space-y-4">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="font-semibold">{step.step_title}</h3>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                    Query {index + 1} of {result.executed_steps.length}
+                  </div>
+                  <h3 className="mt-1 font-semibold">{step.step_title}</h3>
+                </div>
                 <Badge tone={step.success ? "success" : "danger"}>
                   {step.success ? "Success" : "Failed"}
                 </Badge>
@@ -465,10 +498,31 @@ function SmartAnalysisMode({
                 </pre>
               </details>
               {step.success ? (
-                <div className="grid gap-4 xl:grid-cols-2">
-                  <DataTable results={step.results} />
-                  <ChartPanel results={step.results} />
-                </div>
+                <Tabs.Root defaultValue="results">
+                  <Tabs.List className="mb-4 flex flex-wrap gap-2 rounded-xl border border-border bg-white p-1 shadow-sm">
+                    {["results", "chart", "export"].map((tab) => (
+                      <Tabs.Trigger
+                        key={tab}
+                        value={tab}
+                        className="rounded-lg px-4 py-2 text-sm font-semibold capitalize text-slate-500 data-[state=active]:bg-blue-50 data-[state=active]:text-blue-700"
+                      >
+                        {tab}
+                      </Tabs.Trigger>
+                    ))}
+                  </Tabs.List>
+                  <Tabs.Content value="results">
+                    <DataTable results={step.results} />
+                  </Tabs.Content>
+                  <Tabs.Content value="chart">
+                    <ChartPanel results={step.results} />
+                  </Tabs.Content>
+                  <Tabs.Content value="export">
+                    <ExportButtons
+                      results={step.results}
+                      filename={`smart_analysis_${index + 1}_${slug(step.step_title)}`}
+                    />
+                  </Tabs.Content>
+                </Tabs.Root>
               ) : (
                 <ErrorBanner message={step.error ?? "Step failed."} />
               )}

@@ -1,3 +1,5 @@
+import logging
+import re
 import sys
 from typing import Annotated
 
@@ -51,6 +53,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 print(f"SQLMind-Agent FastAPI Python executable: {sys.executable}")
+logger = logging.getLogger(__name__)
 
 
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -59,6 +62,11 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 def get_active_database_config() -> ConnectDatabaseRequest | None:
     value = getattr(app.state, "database_config", None)
     return value if isinstance(value, ConnectDatabaseRequest) else None
+
+
+def get_active_db_type() -> str:
+    config = get_active_database_config()
+    return config.db_type if config is not None else "sqlite"
 
 
 def get_mcp_client(settings: SettingsDep) -> SQLMindMCPClient:
@@ -146,11 +154,11 @@ def ask(
             for item in request.conversation_history
         ]
         sql = nim_client.generate_sql(question, schema_dict, conversation_history)
-        limited_sql = apply_limit(
-            validate_read_only_sql(sql),
+        limited_sql, results = _execute_safe_read_only_sql(
+            sql,
             request.limit or settings.default_limit,
+            mcp_client,
         )
-        results = mcp_client.run_select_query(limited_sql)
         explanation = nim_client.explain_results(
             question,
             limited_sql,
@@ -186,7 +194,11 @@ def analyze(
         question = validate_read_only_prompt(request.question)
         schema_response = mcp_client.get_database_schema()
         schema_dict = schema_response.model_dump()
-        analysis_plan = analysis_planner.generate_plan(question, schema_dict)
+        analysis_plan = analysis_planner.generate_plan(
+            question,
+            schema_dict,
+            get_active_db_type(),
+        )
     except MCPClientError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except MissingNvidiaApiKeyError as error:
@@ -198,27 +210,95 @@ def analyze(
 
     executed_steps = []
     for step in analysis_plan:
+        raw_sql = step.sql_query
         try:
-            sql = _validate_select_only_analysis_sql(step.sql_query)
-            limited_sql = apply_limit(sql, request.limit or settings.default_limit)
-            results = mcp_client.run_select_query(limited_sql)
+            cleaned_sql = _clean_generated_sql(raw_sql)
+            logger.info(
+                "Smart Analysis step SQL prepared",
+                extra={
+                    "step_title": step.step_title,
+                    "raw_sql": raw_sql,
+                    "cleaned_sql": cleaned_sql,
+                },
+            )
+            limited_sql, results = _execute_safe_read_only_sql(
+                cleaned_sql,
+                request.limit or settings.default_limit,
+                mcp_client,
+                select_only=True,
+            )
+            logger.info(
+                "Smart Analysis step SQL executed",
+                extra={
+                    "step_title": step.step_title,
+                    "validated_sql": limited_sql,
+                    "row_count": results.row_count,
+                },
+            )
             executed_steps.append(
                 {
                     "step_title": step.step_title,
                     "purpose": step.purpose,
-                    "sql_query": limited_sql,
+                    "sql_query": _complete_sql_statement(limited_sql),
                     "success": True,
                     "results": results,
                 }
             )
-        except (UnsafeQueryError, MCPClientError, Exception) as error:
+        except UnsafeQueryError as error:
+            message = f"Safety validation failed: {error}"
+            logger.warning(
+                "Smart Analysis step safety validation failed",
+                extra={
+                    "step_title": step.step_title,
+                    "raw_sql": raw_sql,
+                    "error": str(error),
+                },
+            )
             executed_steps.append(
                 {
                     "step_title": step.step_title,
                     "purpose": step.purpose,
-                    "sql_query": step.sql_query,
+                    "sql_query": _complete_sql_statement(_clean_generated_sql(raw_sql)),
                     "success": False,
+                    "error": message,
+                }
+            )
+        except MCPClientError as error:
+            message = f"Database error: {error}"
+            logger.warning(
+                "Smart Analysis step database execution failed",
+                extra={
+                    "step_title": step.step_title,
+                    "raw_sql": raw_sql,
+                    "cleaned_sql": _clean_generated_sql(raw_sql),
                     "error": str(error),
+                },
+            )
+            executed_steps.append(
+                {
+                    "step_title": step.step_title,
+                    "purpose": step.purpose,
+                    "sql_query": _complete_sql_statement(_clean_generated_sql(raw_sql)),
+                    "success": False,
+                    "error": message,
+                }
+            )
+        except Exception as error:
+            message = f"Malformed SQL from planner or execution error: {error}"
+            logger.exception(
+                "Smart Analysis step failed unexpectedly",
+                extra={
+                    "step_title": step.step_title,
+                    "raw_sql": raw_sql,
+                },
+            )
+            executed_steps.append(
+                {
+                    "step_title": step.step_title,
+                    "purpose": step.purpose,
+                    "sql_query": _complete_sql_statement(_clean_generated_sql(raw_sql)),
+                    "success": False,
+                    "error": message,
                 }
             )
 
@@ -317,11 +397,38 @@ def _validate_database_request(request: ConnectDatabaseRequest) -> None:
         raise ValueError(f"Missing required database connection fields: {', '.join(missing)}.")
 
 
-def _validate_select_only_analysis_sql(sql: str) -> str:
-    validated = validate_read_only_sql(sql)
-    if not validated.lower().lstrip().startswith(("select ", "with ")):
+def _execute_safe_read_only_sql(
+    sql: str,
+    limit: int,
+    mcp_client: SQLMindMCPClient,
+    *,
+    select_only: bool = False,
+) -> tuple[str, QueryResults]:
+    cleaned_sql = _clean_generated_sql(sql)
+    validated_sql = validate_read_only_sql(cleaned_sql)
+    if select_only and not validated_sql.lower().lstrip().startswith(("select ", "with ")):
         raise UnsafeQueryError("Smart analysis only allows SELECT queries.")
-    return validated
+    limited_sql = apply_limit(validated_sql, limit)
+    results = mcp_client.run_select_query(limited_sql)
+    return limited_sql, results
+
+
+def _clean_generated_sql(sql: str) -> str:
+    cleaned = sql.strip()
+    if cleaned.startswith("```"):
+        lines = [line for line in cleaned.splitlines() if not line.strip().startswith("```")]
+        cleaned = "\n".join(lines).strip()
+
+    match = re.search(r"\b(select|with)\b", cleaned, flags=re.IGNORECASE)
+    if match:
+        cleaned = cleaned[match.start() :]
+
+    cleaned = re.sub(r"```.*$", "", cleaned, flags=re.DOTALL).strip()
+    return cleaned.rstrip(";").strip()
+
+
+def _complete_sql_statement(sql: str) -> str:
+    return sql.strip().rstrip(";") + ";"
 
 
 def _validate_dashboard_prompt(prompt: str) -> str:
