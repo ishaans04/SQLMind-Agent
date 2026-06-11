@@ -58,10 +58,10 @@ npm run dev
 
 ### Available Services
 
-Frontend: http://127.0.0.1:5173
-Backend: http://127.0.0.1:8090
-API Docs: http://127.0.0.1:8090/docs
-Health Check: http://127.0.0.1:8090/health
+- Frontend: `http://127.0.0.1:5173`
+- Backend: `http://127.0.0.1:8090`
+- API Docs: `http://127.0.0.1:8090/docs`
+- Health Check: `http://127.0.0.1:8090/health`
 
 ## Run Tests
 
