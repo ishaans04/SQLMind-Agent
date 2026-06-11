@@ -23,10 +23,10 @@ python -m uvicorn sqlmind_agent.api:app --reload --port 8090
 
 ### Backend URLs
 
-Health Check: http://127.0.0.1:8090/health 
-API Docs: http://127.0.0.1:8090/docs
+- Health Check: `http://127.0.0.1:8090/health`
+- API Docs: `http://127.0.0.1:8090/docs`
 
-## Run the Optional Streamlit UI
+## Run the React Frontend
 
 ```powershell
 cd frontend
@@ -36,7 +36,7 @@ npm run dev
 
 ### Frontend URL
 
-http://127.0.0.1:5173
+`http://127.0.0.1:5173`
 
 ## Full Local Development
 
@@ -71,6 +71,7 @@ python -m pytest
 
 Current Status:
 
+```text
 85 tests passed
 
 ## Run the Optional Streamlit UI
