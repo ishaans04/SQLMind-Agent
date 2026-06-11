@@ -59,7 +59,10 @@ If not, restart the FastAPI backend.
 ### Frontend Cannot Reach Backend
 
 Verify that:
+
+```env
 VITE_API_BASE_URL=`http://127.0.0.1:8090`
+```
 
 matches the backend port.
 
